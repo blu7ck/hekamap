@@ -20,7 +20,13 @@ export async function sendMailgunEmail(
 ): Promise<{ ok: boolean; messageId?: string; error?: string }> {
   const apiKey = env.MAILGUN_API_KEY;
   const domain = env.MAILGUN_DOMAIN;
-  const from = options.from || `auth@notify.hekamap.com`;
+  
+  // Sandbox domain için farklı from adresi kullan
+  // Production'da auth@notify.hekamap.com, sandbox'ta postmaster@domain
+  const isSandbox = domain.includes('sandbox') || domain.includes('mailgun.org');
+  const from = options.from || (isSandbox 
+    ? `Mailgun Sandbox <postmaster@${domain}>`
+    : `auth@notify.hekamap.com`);
 
   const formData = new FormData();
   formData.append('from', from);
@@ -35,7 +41,10 @@ export async function sendMailgunEmail(
   }
 
   try {
-    const response = await fetch(`https://api.mailgun.net/v3/${domain}/messages`, {
+    // Mailgun API endpoint (EU domain için farklı olabilir, şimdilik US kullanıyoruz)
+    const apiUrl = `https://api.mailgun.net/v3/${domain}/messages`;
+    
+    const response = await fetch(apiUrl, {
       method: 'POST',
       headers: {
         Authorization: `Basic ${btoa(`api:${apiKey}`)}`,
@@ -45,10 +54,12 @@ export async function sendMailgunEmail(
 
     const data = await response.json();
     if (!response.ok) {
+      console.error('Mailgun API error:', data);
       return { ok: false, error: data.message || 'Mailgun API error' };
     }
     return { ok: true, messageId: data.id };
   } catch (err: any) {
+    console.error('Mailgun network error:', err);
     return { ok: false, error: err.message || 'Network error' };
   }
 }
