@@ -1,0 +1,45 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* Global styles previously in index.html */
+body {
+  font-family: 'Inter', sans-serif;
+  overflow: hidden;
+  background-color: #000;
+}
+
+h1, h2, h3, h4, .font-oswald {
+  font-family: 'Oswald', sans-serif;
+}
+
+/* Hide Scrollbar */
+.no-scrollbar::-webkit-scrollbar {
+  display: none;
+}
+.no-scrollbar {
+  -ms-overflow-style: none;
+  scrollbar-width: none;
+}
+
+@keyframes fadeIn {
+  from { opacity: 0; transform: translateY(10px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+@keyframes slowPan {
+  0% { transform: scale(1.05) translate(0, 0); }
+  50% { transform: scale(1.15) translate(-1%, -1%); }
+  100% { transform: scale(1.05) translate(0, 0); }
+}
+
+@keyframes scaleWidth {
+  from { transform: scaleX(0); }
+  to { transform: scaleX(1); }
+}
+
+@keyframes slideIn {
+  from { transform: translateY(100%); opacity: 0; }
+  to { transform: translateY(0); opacity: 1; }
+}
+
