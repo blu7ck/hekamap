@@ -2,7 +2,7 @@
 DO $$
 DECLARE
   v_user_id UUID;
-  v_email TEXT := 'iletisim@hekamap.com';
+  v_email TEXT := 'halit@hekamap.com';
 BEGIN
   SELECT id INTO v_user_id FROM auth.users WHERE email = v_email;
 

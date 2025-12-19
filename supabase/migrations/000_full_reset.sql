@@ -592,7 +592,7 @@ GRANT EXECUTE ON FUNCTION public.list_viewer_assets(UUID) TO authenticated;
 DO $$
 DECLARE
   v_user_id UUID;
-  v_email TEXT := 'iletisim@hekamap.com';
+  v_email TEXT := 'halit@hekamap.com';
 BEGIN
   SELECT id INTO v_user_id FROM auth.users WHERE email = v_email;
   IF v_user_id IS NULL THEN
