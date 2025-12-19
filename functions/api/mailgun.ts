@@ -21,12 +21,9 @@ export async function sendMailgunEmail(
   const apiKey = env.MAILGUN_API_KEY;
   const domain = env.MAILGUN_DOMAIN;
   
-  // Sandbox domain için farklı from adresi kullan
-  // Production'da auth@notify.hekamap.com, sandbox'ta postmaster@domain
-  const isSandbox = domain.includes('sandbox') || domain.includes('mailgun.org');
-  const from = options.from || (isSandbox 
-    ? `Mailgun Sandbox <postmaster@${domain}>`
-    : `auth@notify.hekamap.com`);
+  // Production domain: notify.hekamap.com
+  // Gönderici adresi: auth@notify.hekamap.com
+  const from = options.from || `auth@notify.hekamap.com`;
 
   const formData = new FormData();
   formData.append('from', from);
