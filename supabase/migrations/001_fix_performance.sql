@@ -244,9 +244,56 @@ CREATE INDEX IF NOT EXISTS idx_security_events_user_id ON public.security_events
 CREATE INDEX IF NOT EXISTS idx_votes_user_id ON public.votes(user_id);
 
 ----------------------------
+-- 3. OPTIMIZE RPC FUNCTIONS: Optimize auth.uid() calls in functions
+----------------------------
+
+-- list_project_assets: Optimize auth.uid() call
+CREATE OR REPLACE FUNCTION public.list_project_assets(project_id UUID)
+RETURNS TABLE (
+  id UUID,
+  name TEXT,
+  mime_type TEXT,
+  source_format TEXT,
+  asset_type TEXT,
+  asset_category TEXT,
+  processing_status TEXT,
+  asset_key TEXT,
+  final_key TEXT,
+  raw_file_size_bytes BIGINT,
+  final_file_size_bytes BIGINT,
+  raw_file_retention_days INTEGER,
+  raw_file_deleted_at TIMESTAMPTZ,
+  uploaded_by UUID,
+  created_at TIMESTAMPTZ,
+  processed_at TIMESTAMPTZ
+)
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public
+AS $$
+BEGIN
+  IF NOT EXISTS (SELECT 1 FROM public.projects p WHERE p.id = project_id AND p.owner_id = (select auth.uid())) THEN
+    RAISE EXCEPTION 'Forbidden';
+  END IF;
+
+  RETURN QUERY
+  SELECT
+    pa.id, pa.name, pa.mime_type, pa.source_format, pa.asset_type, pa.asset_category,
+    pa.processing_status, pa.asset_key, pa.final_key,
+    pa.raw_file_size_bytes, pa.final_file_size_bytes,
+    pa.raw_file_retention_days, pa.raw_file_deleted_at,
+    pa.uploaded_by, pa.created_at, pa.processed_at
+  FROM public.project_assets pa
+  WHERE pa.project_id = project_id
+  ORDER BY pa.created_at DESC;
+END;
+$$;
+
+----------------------------
 -- Migration Complete
 -- Summary:
 -- - Optimized 50+ RLS policies by wrapping auth.uid() in SELECT subquery
 -- - Consolidated multiple permissive policies (reports, project_access)
 -- - Added 14 foreign key indexes for better JOIN performance
+-- - Optimized list_project_assets RPC function
 ----------------------------

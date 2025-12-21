@@ -93,12 +93,18 @@ export const WorkspacePage: React.FC = () => {
 
   const loadAssets = async (projectId: string) => {
     setError(null);
-    const { data, error } = await supabase.rpc('list_project_assets', { project_id: projectId });
-    if (error) {
-      setError('Varlıklar alınamadı.');
-      return;
+    try {
+      const { data, error } = await supabase.rpc('list_project_assets', { project_id: projectId });
+      if (error) {
+        console.error('loadAssets error:', error);
+        setError(`Varlıklar alınamadı: ${error.message || 'Bilinmeyen hata'}`);
+        return;
+      }
+      setAssets(data || []);
+    } catch (err: any) {
+      console.error('loadAssets exception:', err);
+      setError(`Varlıklar alınamadı: ${err.message || 'Beklenmeyen hata'}`);
     }
-    setAssets(data || []);
   };
 
   const requestSignedUpload = async (
@@ -191,27 +197,61 @@ export const WorkspacePage: React.FC = () => {
       // Upload file with progress tracking
       const xhr = new XMLHttpRequest();
       await new Promise<void>((resolve, reject) => {
+        let timeoutId: NodeJS.Timeout;
+        
+        // Timeout: 5 dakika
+        timeoutId = setTimeout(() => {
+          xhr.abort();
+          reject(new Error('Upload timeout: Dosya yükleme süresi aşıldı (5 dakika)'));
+        }, 5 * 60 * 1000);
+
         xhr.upload.addEventListener('progress', (e) => {
           if (e.lengthComputable) {
-            setUploadProgress(Math.round((e.loaded / e.total) * 100));
+            const percent = Math.round((e.loaded / e.total) * 100);
+            setUploadProgress(percent);
+            console.log(`Upload progress: ${percent}%`);
           }
         });
+
         xhr.addEventListener('load', () => {
+          clearTimeout(timeoutId);
           if (xhr.status >= 200 && xhr.status < 300) {
+            console.log('Upload completed successfully');
             resolve();
           } else {
-            reject(new Error(`Upload failed with status ${xhr.status}`));
+            console.error('Upload failed with status:', xhr.status, xhr.statusText);
+            reject(new Error(`Upload failed with status ${xhr.status}: ${xhr.statusText || 'Unknown error'}`));
           }
         });
-        xhr.addEventListener('error', () => reject(new Error('Upload failed')));
-        xhr.open('PUT', upload_url);
-        Object.entries(headers || {}).forEach(([k, v]) => {
-          if (k.toLowerCase() !== 'content-type') {
-            xhr.setRequestHeader(k, v);
-          }
+
+        xhr.addEventListener('error', () => {
+          clearTimeout(timeoutId);
+          console.error('Upload error event');
+          reject(new Error('Upload failed: Network error'));
         });
-        xhr.setRequestHeader('Content-Type', selectedFile.type || 'application/octet-stream');
-        xhr.send(selectedFile);
+
+        xhr.addEventListener('abort', () => {
+          clearTimeout(timeoutId);
+          console.error('Upload aborted');
+          reject(new Error('Upload aborted'));
+        });
+
+        try {
+          xhr.open('PUT', upload_url);
+          // Headers ekle (Content-Type hariç, çünkü onu özel ayarlıyoruz)
+          Object.entries(headers || {}).forEach(([k, v]) => {
+            if (k.toLowerCase() !== 'content-type') {
+              xhr.setRequestHeader(k, v);
+            }
+          });
+          xhr.setRequestHeader('Content-Type', selectedFile.type || 'application/octet-stream');
+          console.log('Starting upload to:', upload_url);
+          xhr.send(selectedFile);
+        } catch (err: any) {
+          clearTimeout(timeoutId);
+          console.error('Upload setup error:', err);
+          reject(new Error(`Upload setup failed: ${err.message || 'Unknown error'}`));
+        }
       });
 
       // Notify upload complete to trigger processing
