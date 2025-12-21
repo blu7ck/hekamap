@@ -28,6 +28,8 @@ END$$;
 DROP TABLE IF EXISTS public.processing_jobs CASCADE;
 DROP TABLE IF EXISTS public.project_layers CASCADE;
 DROP TABLE IF EXISTS public.project_assets CASCADE;
+DROP TABLE IF EXISTS public.project_folders CASCADE;
+DROP TABLE IF EXISTS public.organizations CASCADE;
 DROP TABLE IF EXISTS public.security_events CASCADE;
 DROP TABLE IF EXISTS public.rate_limit_logs CASCADE;
 DROP TABLE IF EXISTS public.notifications CASCADE;
@@ -149,10 +151,36 @@ CREATE TABLE public.reports (
   created_at TIMESTAMPTZ DEFAULT NOW()
 );
 
+-- Organizations (company/workspace grouping)
+CREATE TABLE public.organizations (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  owner_id UUID NOT NULL REFERENCES auth.users(id) ON DELETE CASCADE,
+  name TEXT NOT NULL,
+  slug TEXT NOT NULL,
+  description TEXT,
+  created_at TIMESTAMPTZ DEFAULT NOW(),
+  updated_at TIMESTAMPTZ DEFAULT NOW(),
+  UNIQUE(owner_id, slug)
+);
+
+-- Project folders (hierarchical, per-organization)
+CREATE TABLE public.project_folders (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  org_id UUID NOT NULL REFERENCES public.organizations(id) ON DELETE CASCADE,
+  parent_id UUID REFERENCES public.project_folders(id) ON DELETE CASCADE,
+  name TEXT NOT NULL,
+  description TEXT,
+  order_index INTEGER DEFAULT 0,
+  created_at TIMESTAMPTZ DEFAULT NOW(),
+  updated_at TIMESTAMPTZ DEFAULT NOW()
+);
+
 -- Projects
 CREATE TABLE public.projects (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   owner_id UUID NOT NULL REFERENCES auth.users(id) ON DELETE CASCADE,
+  org_id UUID NOT NULL REFERENCES public.organizations(id) ON DELETE CASCADE,
+  folder_id UUID REFERENCES public.project_folders(id) ON DELETE SET NULL,
   name TEXT NOT NULL,
   description TEXT,
   slug TEXT NOT NULL,
@@ -340,6 +368,9 @@ CREATE INDEX idx_security_events_type ON public.security_events(event_type);
 CREATE INDEX idx_security_events_severity ON public.security_events(severity);
 CREATE INDEX idx_security_events_resolved ON public.security_events(resolved);
 CREATE INDEX idx_security_events_created_at ON public.security_events(created_at DESC);
+CREATE INDEX idx_organizations_owner_slug ON public.organizations(owner_id, slug);
+CREATE INDEX idx_project_folders_org_parent ON public.project_folders(org_id, parent_id);
+CREATE INDEX idx_projects_org_folder ON public.projects(org_id, folder_id);
 
 ----------------------------
 -- RLS Enable
@@ -358,6 +389,8 @@ ALTER TABLE public.notifications ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.rate_limit_logs ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.security_events ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.project_assets ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.organizations ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.project_folders ENABLE ROW LEVEL SECURITY;
 -- processing_jobs: no RLS to allow worker access via service role.
 
 ----------------------------
@@ -482,6 +515,26 @@ CREATE POLICY project_assets_update_owner ON public.project_assets FOR UPDATE US
 );
 CREATE POLICY project_assets_delete_owner ON public.project_assets FOR DELETE USING (
   EXISTS (SELECT 1 FROM public.projects p WHERE p.id = project_id AND p.owner_id = auth.uid())
+);
+
+-- organizations (owners only)
+CREATE POLICY organizations_select_owner ON public.organizations FOR SELECT USING (auth.uid() = owner_id);
+CREATE POLICY organizations_insert_owner ON public.organizations FOR INSERT WITH CHECK (auth.uid() = owner_id);
+CREATE POLICY organizations_update_owner ON public.organizations FOR UPDATE USING (auth.uid() = owner_id);
+CREATE POLICY organizations_delete_owner ON public.organizations FOR DELETE USING (auth.uid() = owner_id);
+
+-- project_folders (by org owner)
+CREATE POLICY project_folders_select_owner ON public.project_folders FOR SELECT USING (
+  EXISTS (SELECT 1 FROM public.organizations o WHERE o.id = org_id AND o.owner_id = auth.uid())
+);
+CREATE POLICY project_folders_insert_owner ON public.project_folders FOR INSERT WITH CHECK (
+  EXISTS (SELECT 1 FROM public.organizations o WHERE o.id = org_id AND o.owner_id = auth.uid())
+);
+CREATE POLICY project_folders_update_owner ON public.project_folders FOR UPDATE USING (
+  EXISTS (SELECT 1 FROM public.organizations o WHERE o.id = org_id AND o.owner_id = auth.uid())
+);
+CREATE POLICY project_folders_delete_owner ON public.project_folders FOR DELETE USING (
+  EXISTS (SELECT 1 FROM public.organizations o WHERE o.id = org_id AND o.owner_id = auth.uid())
 );
 
 -- project_layers (owners only)
