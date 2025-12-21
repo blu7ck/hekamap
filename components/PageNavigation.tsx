@@ -11,7 +11,6 @@ export const PageNavigation: React.FC<PageNavigationProps> = ({ activeSection, o
     { id: 'hero', label: 'Giriş' },
     { id: 'services', label: 'Hizmetler' },
     ...(showDetailDot ? [{ id: 'service-detail', label: 'Detay' }] : []),
-    { id: 'references', label: 'Referanslar' },
     { id: 'contact', label: 'İletişim' }
   ];
 

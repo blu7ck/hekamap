@@ -43,3 +43,79 @@ h1, h2, h3, h4, .font-oswald {
   to { transform: translateY(0); opacity: 1; }
 }
 
+@keyframes slide-left-to-right {
+  0% {
+    transform: translateX(-50px);
+    opacity: 0;
+  }
+  2% {
+    opacity: 0;
+  }
+  3% {
+    transform: translateX(-3px);
+    opacity: 1;
+  }
+  4% {
+    transform: translateX(0px);
+    opacity: 1;
+  }
+  5% {
+    transform: translateX(3px);
+    opacity: 1;
+  }
+  6% {
+    transform: translateX(6px);
+    opacity: 0;
+  }
+  7% {
+    transform: translateX(50px);
+    opacity: 0;
+  }
+  100% {
+    transform: translateX(50px);
+    opacity: 0;
+  }
+}
+
+@keyframes slide-right-to-left {
+  0% {
+    transform: translateX(50px);
+    opacity: 0;
+  }
+  2% {
+    opacity: 0;
+  }
+  3% {
+    transform: translateX(3px);
+    opacity: 1;
+  }
+  4% {
+    transform: translateX(0px);
+    opacity: 1;
+  }
+  5% {
+    transform: translateX(-3px);
+    opacity: 1;
+  }
+  6% {
+    transform: translateX(-6px);
+    opacity: 0;
+  }
+  7% {
+    transform: translateX(-50px);
+    opacity: 0;
+  }
+  100% {
+    transform: translateX(-50px);
+    opacity: 0;
+  }
+}
+
+.animate-slide-left-to-right {
+  animation: slide-left-to-right 2s linear infinite;
+}
+
+.animate-slide-right-to-left {
+  animation: slide-right-to-left 2s linear infinite;
+}
+

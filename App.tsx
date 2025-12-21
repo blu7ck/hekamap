@@ -2,7 +2,6 @@ import React, { useState, useRef, useEffect } from 'react';
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
 import { Hero } from './components/Hero';
 import { Services } from './components/Services';
-import { References } from './components/References';
 import { Contact } from './components/Contact';
 import { SideControls } from './components/SideControls';
 import { ContactModal } from './components/ContactModal';
@@ -23,7 +22,6 @@ const LandingPage: React.FC = () => {
   const scrollContainerRef = useRef<HTMLDivElement>(null);
   const heroRef = useRef<HTMLDivElement>(null);
   const servicesRef = useRef<HTMLDivElement>(null);
-  const referencesRef = useRef<HTMLDivElement>(null);
   const contactRef = useRef<HTMLDivElement>(null);
   
   useEffect(() => {
@@ -43,7 +41,6 @@ const LandingPage: React.FC = () => {
 
     if (heroRef.current) observer.observe(heroRef.current);
     if (servicesRef.current) observer.observe(servicesRef.current);
-    if (referencesRef.current) observer.observe(referencesRef.current);
     if (contactRef.current) observer.observe(contactRef.current);
 
     return () => observer.disconnect();
@@ -53,7 +50,6 @@ const LandingPage: React.FC = () => {
     const refs: Record<string, React.RefObject<HTMLDivElement>> = {
       hero: heroRef,
       services: servicesRef,
-      references: referencesRef,
       contact: contactRef,
     };
     
@@ -73,10 +69,6 @@ const LandingPage: React.FC = () => {
             <Services />
         </div>
 
-        <div id="references" ref={referencesRef} className="snap-start h-screen w-full">
-            <References />
-        </div>
-        
         <div id="contact" ref={contactRef} className="snap-start h-screen w-full">
           <Contact onOpenModal={() => setIsModalOpen(true)} />
         </div>

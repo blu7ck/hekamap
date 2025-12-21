@@ -5,9 +5,68 @@ interface ContactProps {
   onOpenModal: () => void;
 }
 
+// Referans logo verileri
+const referenceLogos = [
+  { name: 'Referans 1', logo: '🏢', url: 'https://example.com/ref1' },
+  { name: 'Referans 2', logo: '🏭', url: 'https://example.com/ref2' },
+  { name: 'Referans 3', logo: '🏗️', url: 'https://example.com/ref3' },
+  { name: 'Referans 4', logo: '🌉', url: 'https://example.com/ref4' },
+  { name: 'Referans 5', logo: '🏛️', url: 'https://example.com/ref5' },
+  { name: 'Referans 6', logo: '🏦', url: 'https://example.com/ref6' },
+  { name: 'Referans 7', logo: '🏨', url: 'https://example.com/ref7' },
+  { name: 'Referans 8', logo: '🏪', url: 'https://example.com/ref8' },
+  { name: 'Referans 9', logo: '🏬', url: 'https://example.com/ref9' },
+  { name: 'Referans 10', logo: '🏯', url: 'https://example.com/ref10' },
+];
+
 export const Contact: React.FC<ContactProps> = ({ onOpenModal }) => {
+  // İlk 5 logo soldan sağa, son 5 logo sağdan sola
+  const leftLogos = referenceLogos.slice(0, 5);
+  const rightLogos = referenceLogos.slice(5, 10);
+
   return (
     <section className="relative w-screen h-screen snap-start shrink-0 bg-stone-100 flex flex-col md:flex-row overflow-hidden">
+      {/* Animasyonlu Referans Logoları - Yatay Kayma */}
+      <div className="absolute top-0 left-0 w-full z-50 h-24 overflow-hidden">
+        {/* Sol taraftaki logolar - Soldan sağa */}
+        <div className="absolute left-0 top-0 h-full flex items-center justify-center" style={{ width: '6px' }}>
+          {leftLogos.map((ref, idx) => (
+            <a
+              key={`left-logo-${idx}`}
+              href={ref.url}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="absolute flex items-center justify-center w-10 h-10 md:w-14 md:h-14 lg:w-16 lg:h-16 rounded-xl hover:scale-110 transition-all duration-300 text-xl md:text-2xl lg:text-3xl animate-slide-left-to-right"
+              style={{ 
+                animationDelay: `${idx * 0.15}s`,
+              }}
+              title={ref.name}
+            >
+              {ref.logo}
+            </a>
+          ))}
+        </div>
+
+        {/* Sağ taraftaki logolar - Sağdan sola */}
+        <div className="absolute right-0 top-0 h-full flex items-center justify-center" style={{ width: '6px' }}>
+          {rightLogos.map((ref, idx) => (
+            <a
+              key={`right-logo-${idx}`}
+              href={ref.url}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="absolute flex items-center justify-center w-10 h-10 md:w-14 md:h-14 lg:w-16 lg:h-16 rounded-xl hover:scale-110 transition-all duration-300 text-xl md:text-2xl lg:text-3xl animate-slide-right-to-left"
+              style={{ 
+                animationDelay: `${idx * 0.15}s`,
+              }}
+              title={ref.name}
+            >
+              {ref.logo}
+            </a>
+          ))}
+        </div>
+      </div>
+
       
       {/* Left Side: Text & Graphics */}
       <div className="w-full md:w-1/2 h-full bg-stone-900 text-white p-8 md:p-20 flex flex-col justify-center relative overflow-hidden">
