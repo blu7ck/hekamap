@@ -3,79 +3,8 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <!-- Fix Cloudflare Insights integrity hash mismatch - Must run immediately -->
-    <script>
-      (function() {
-        'use strict';
-        // Override script loading to remove integrity before it's processed
-        var originalCreateElement = document.createElement;
-        document.createElement = function(tagName) {
-          var element = originalCreateElement.call(document, tagName);
-          if (tagName.toLowerCase() === 'script') {
-            var originalSetAttribute = element.setAttribute;
-            element.setAttribute = function(name, value) {
-              if (name === 'integrity' && this.src && this.src.includes('cloudflareinsights.com')) {
-                return; // Don't set integrity for Cloudflare Insights
-              }
-              return originalSetAttribute.call(this, name, value);
-            };
-            // Also intercept src attribute
-            var srcDescriptor = Object.getOwnPropertyDescriptor(HTMLScriptElement.prototype, 'src');
-            if (srcDescriptor && srcDescriptor.set) {
-              Object.defineProperty(element, 'src', {
-                get: function() { return this.getAttribute('src'); },
-                set: function(value) {
-                  this.setAttribute('src', value);
-                  if (value && value.includes('cloudflareinsights.com')) {
-                    this.removeAttribute('integrity');
-                  }
-                },
-                configurable: true,
-                enumerable: true
-              });
-            }
-          }
-          return element;
-        };
-        
-        // Also fix existing scripts
-        function fixExistingScripts() {
-          var scripts = document.querySelectorAll('script[src*="cloudflareinsights.com"]');
-          scripts.forEach(function(script) {
-            script.removeAttribute('integrity');
-            if (script.crossOrigin && script.crossOrigin !== 'anonymous') {
-              script.crossOrigin = 'anonymous';
-            }
-          });
-        }
-        
-        // Run immediately
-        fixExistingScripts();
-        if (document.readyState === 'loading') {
-          document.addEventListener('DOMContentLoaded', fixExistingScripts);
-        }
-        
-        // Monitor for dynamically added scripts
-        var observer = new MutationObserver(function(mutations) {
-          mutations.forEach(function(mutation) {
-            mutation.addedNodes.forEach(function(node) {
-              if (node.nodeType === 1 && node.tagName === 'SCRIPT') {
-                if (node.src && node.src.includes('cloudflareinsights.com')) {
-                  node.removeAttribute('integrity');
-                }
-              }
-            });
-          });
-          fixExistingScripts();
-        });
-        observer.observe(document.documentElement || document, { 
-          childList: true, 
-          subtree: true 
-        });
-      })();
-    </script>
-    <!-- Content Security Policy: Allow CesiumJS (WebAssembly/eval) and Cloudflare Insights -->
-    <meta http-equiv="Content-Security-Policy" content="script-src 'self' 'unsafe-inline' 'unsafe-eval' 'wasm-unsafe-eval' https://static.cloudflareinsights.com; connect-src 'self' https://cloudflareinsights.com https://static.cloudflareinsights.com https://cesium.com https://www.cesium.com https://api.cesium.com https://api.mapbox.com https://api.tiles.mapbox.com; img-src 'self' data: https: blob:; worker-src 'self' blob:;">
+    <!-- Content Security Policy: Required for CesiumJS (WebAssembly/eval) -->
+    <meta http-equiv="Content-Security-Policy" content="script-src 'self' 'unsafe-inline' 'unsafe-eval' 'wasm-unsafe-eval'; connect-src 'self' https://cesium.com https://www.cesium.com https://api.cesium.com https://api.mapbox.com https://api.tiles.mapbox.com; img-src 'self' data: https: blob:; worker-src 'self' blob:;">
     <title>HEKAMAP | Geleceği Konumlandırıyoruz</title>
     <link href="https://fonts.googleapis.com/css2?family=Oswald:wght@300;400;500;700&family=Inter:wght@300;400;500&display=swap" rel="stylesheet">
     <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns=%27http://www.w3.org/2000/svg%27 viewBox=%270 0 100 100%27%3E%3Crect width=%27100%27 height=%27100%27 fill=%27%23000000%27/%3E%3Ctext x=%2710%27 y=%2755%27 font-size=%2745%27 fill=%27%2310b981%27%3EH%3C/text%3E%3C/svg%3E">
