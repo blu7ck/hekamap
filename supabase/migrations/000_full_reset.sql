@@ -775,18 +775,167 @@ BEGIN
 END;
 $$;
 
+-- list_organizations (owner)
+CREATE OR REPLACE FUNCTION public.list_organizations()
+RETURNS TABLE (id UUID, name TEXT, slug TEXT, description TEXT, created_at TIMESTAMPTZ, updated_at TIMESTAMPTZ)
+LANGUAGE sql
+SECURITY DEFINER
+SET search_path = public
+AS $$
+  SELECT o.id, o.name, o.slug, o.description, o.created_at, o.updated_at
+  FROM public.organizations o
+  WHERE o.owner_id = auth.uid()
+  ORDER BY o.created_at DESC;
+$$;
+
+-- create_organization
+CREATE OR REPLACE FUNCTION public.create_organization(p_name TEXT, p_slug TEXT, p_description TEXT)
+RETURNS UUID
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public
+AS $$
+DECLARE
+  v_id UUID;
+BEGIN
+  IF auth.uid() IS NULL THEN
+    RAISE EXCEPTION 'Unauthorized';
+  END IF;
+
+  INSERT INTO public.organizations (owner_id, name, slug, description, created_at, updated_at)
+  VALUES (auth.uid(), p_name, p_slug, p_description, NOW(), NOW())
+  RETURNING id INTO v_id;
+
+  RETURN v_id;
+END;
+$$;
+
+-- list_project_folders
+CREATE OR REPLACE FUNCTION public.list_project_folders(p_org_id UUID)
+RETURNS TABLE (
+  id UUID,
+  org_id UUID,
+  parent_id UUID,
+  name TEXT,
+  description TEXT,
+  order_index INTEGER,
+  created_at TIMESTAMPTZ,
+  updated_at TIMESTAMPTZ
+)
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public
+AS $$
+BEGIN
+  IF NOT EXISTS (SELECT 1 FROM public.organizations o WHERE o.id = p_org_id AND o.owner_id = auth.uid()) THEN
+    RAISE EXCEPTION 'Forbidden';
+  END IF;
+
+  RETURN QUERY
+  SELECT id, org_id, parent_id, name, description, order_index, created_at, updated_at
+  FROM public.project_folders
+  WHERE org_id = p_org_id
+  ORDER BY parent_id NULLS FIRST, order_index, created_at;
+END;
+$$;
+
+-- create_project_folder
+CREATE OR REPLACE FUNCTION public.create_project_folder(
+  p_org_id UUID,
+  p_parent_id UUID,
+  p_name TEXT,
+  p_description TEXT,
+  p_order_index INTEGER DEFAULT 0
+)
+RETURNS UUID
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public
+AS $$
+DECLARE
+  v_id UUID;
+BEGIN
+  IF NOT EXISTS (SELECT 1 FROM public.organizations o WHERE o.id = p_org_id AND o.owner_id = auth.uid()) THEN
+    RAISE EXCEPTION 'Forbidden';
+  END IF;
+
+  IF p_parent_id IS NOT NULL THEN
+    IF NOT EXISTS (SELECT 1 FROM public.project_folders f WHERE f.id = p_parent_id AND f.org_id = p_org_id) THEN
+      RAISE EXCEPTION 'Parent folder not found';
+    END IF;
+  END IF;
+
+  INSERT INTO public.project_folders (org_id, parent_id, name, description, order_index, created_at, updated_at)
+  VALUES (p_org_id, p_parent_id, p_name, p_description, COALESCE(p_order_index,0), NOW(), NOW())
+  RETURNING id INTO v_id;
+
+  RETURN v_id;
+END;
+$$;
+
+-- create_project_with_org
+CREATE OR REPLACE FUNCTION public.create_project_with_org(
+  p_org_id UUID,
+  p_folder_id UUID,
+  p_name TEXT,
+  p_slug TEXT,
+  p_description TEXT
+)
+RETURNS UUID
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public
+AS $$
+DECLARE
+  v_id UUID;
+BEGIN
+  IF NOT EXISTS (SELECT 1 FROM public.organizations o WHERE o.id = p_org_id AND o.owner_id = auth.uid()) THEN
+    RAISE EXCEPTION 'Forbidden';
+  END IF;
+
+  IF p_folder_id IS NOT NULL THEN
+    IF NOT EXISTS (SELECT 1 FROM public.project_folders f WHERE f.id = p_folder_id AND f.org_id = p_org_id) THEN
+      RAISE EXCEPTION 'Folder not found';
+    END IF;
+  END IF;
+
+  INSERT INTO public.projects (
+    owner_id, org_id, folder_id, name, description, slug,
+    model_url, model_type, thumbnail_url, version, current_version_id, is_public,
+    created_at, updated_at
+  ) VALUES (
+    auth.uid(), p_org_id, p_folder_id, p_name, p_description, p_slug,
+    NULL, NULL, NULL, 1, NULL, FALSE,
+    NOW(), NOW()
+  )
+  RETURNING id INTO v_id;
+
+  RETURN v_id;
+END;
+$$;
+
 REVOKE ALL ON FUNCTION public.get_accessible_projects FROM PUBLIC;
 REVOKE ALL ON FUNCTION public.list_project_assets(UUID) FROM PUBLIC;
 REVOKE ALL ON FUNCTION public.list_viewer_assets(UUID) FROM PUBLIC;
 REVOKE ALL ON FUNCTION public.get_project_layers(UUID) FROM PUBLIC;
 REVOKE ALL ON FUNCTION public.create_project_layer(UUID, TEXT, TEXT, JSONB, TEXT, FLOAT, INTEGER, UUID) FROM PUBLIC;
 REVOKE ALL ON FUNCTION public.set_project_layer_visibility(UUID, BOOLEAN) FROM PUBLIC;
+REVOKE ALL ON FUNCTION public.list_organizations FROM PUBLIC;
+REVOKE ALL ON FUNCTION public.create_organization(TEXT, TEXT, TEXT) FROM PUBLIC;
+REVOKE ALL ON FUNCTION public.list_project_folders(UUID) FROM PUBLIC;
+REVOKE ALL ON FUNCTION public.create_project_folder(UUID, UUID, TEXT, TEXT, INTEGER) FROM PUBLIC;
+REVOKE ALL ON FUNCTION public.create_project_with_org(UUID, UUID, TEXT, TEXT, TEXT) FROM PUBLIC;
 GRANT EXECUTE ON FUNCTION public.get_accessible_projects TO authenticated;
 GRANT EXECUTE ON FUNCTION public.list_project_assets(UUID) TO authenticated;
 GRANT EXECUTE ON FUNCTION public.list_viewer_assets(UUID) TO authenticated;
 GRANT EXECUTE ON FUNCTION public.get_project_layers(UUID) TO authenticated;
 GRANT EXECUTE ON FUNCTION public.create_project_layer(UUID, TEXT, TEXT, JSONB, TEXT, FLOAT, INTEGER, UUID) TO authenticated;
 GRANT EXECUTE ON FUNCTION public.set_project_layer_visibility(UUID, BOOLEAN) TO authenticated;
+GRANT EXECUTE ON FUNCTION public.list_organizations TO authenticated;
+GRANT EXECUTE ON FUNCTION public.create_organization(TEXT, TEXT, TEXT) TO authenticated;
+GRANT EXECUTE ON FUNCTION public.list_project_folders(UUID) TO authenticated;
+GRANT EXECUTE ON FUNCTION public.create_project_folder(UUID, UUID, TEXT, TEXT, INTEGER) TO authenticated;
+GRANT EXECUTE ON FUNCTION public.create_project_with_org(UUID, UUID, TEXT, TEXT, TEXT) TO authenticated;
 
 ----------------------------
 -- Seed / Initial Owner
