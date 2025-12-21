@@ -27,10 +27,10 @@ export const Contact: React.FC<ContactProps> = ({ onOpenModal }) => {
   return (
     <section className="relative w-screen h-screen snap-start shrink-0 bg-stone-100 flex flex-col md:flex-row overflow-hidden">
       {/* Animasyonlu Referans Logoları - Yatay Kayma */}
-      <div className="absolute top-0 left-0 w-full z-50 h-24 overflow-hidden pointer-events-none">
+      <div className="absolute top-0 left-0 w-full z-50 h-24 pointer-events-none">
         {/* Sol taraftaki logolar - Soldan sağa - 6px görünürlük alanı */}
         <div 
-          className="absolute left-0 top-1/2 -translate-y-1/2 h-20 flex items-center justify-center"
+          className="absolute left-0 top-1/2 -translate-y-1/2 h-20"
           style={{
             width: '6px',
             overflow: 'hidden',
@@ -42,9 +42,11 @@ export const Contact: React.FC<ContactProps> = ({ onOpenModal }) => {
               href={ref.url}
               target="_blank"
               rel="noopener noreferrer"
-              className="absolute left-1/2 -translate-x-1/2 flex items-center justify-center w-10 h-10 md:w-14 md:h-14 lg:w-16 lg:h-16 rounded-xl hover:scale-110 transition-all duration-300 text-xl md:text-2xl lg:text-3xl animate-slide-left-to-right pointer-events-auto"
+              className="absolute flex items-center justify-center w-10 h-10 md:w-14 md:h-14 lg:w-16 lg:h-16 rounded-xl hover:scale-110 transition-all duration-300 text-xl md:text-2xl lg:text-3xl animate-slide-left-to-right pointer-events-auto"
               style={{ 
                 animationDelay: `${idx * 0.2}s`,
+                top: '50%',
+                transform: 'translateY(-50%)',
               }}
               title={ref.name}
             >
@@ -55,7 +57,7 @@ export const Contact: React.FC<ContactProps> = ({ onOpenModal }) => {
 
         {/* Sağ taraftaki logolar - Sağdan sola - 6px görünürlük alanı */}
         <div 
-          className="absolute right-0 top-1/2 -translate-y-1/2 h-20 flex items-center justify-center"
+          className="absolute right-0 top-1/2 -translate-y-1/2 h-20"
           style={{
             width: '6px',
             overflow: 'hidden',
@@ -67,9 +69,11 @@ export const Contact: React.FC<ContactProps> = ({ onOpenModal }) => {
               href={ref.url}
               target="_blank"
               rel="noopener noreferrer"
-              className="absolute right-1/2 translate-x-1/2 flex items-center justify-center w-10 h-10 md:w-14 md:h-14 lg:w-16 lg:h-16 rounded-xl hover:scale-110 transition-all duration-300 text-xl md:text-2xl lg:text-3xl animate-slide-right-to-left pointer-events-auto"
+              className="absolute flex items-center justify-center w-10 h-10 md:w-14 md:h-14 lg:w-16 lg:h-16 rounded-xl hover:scale-110 transition-all duration-300 text-xl md:text-2xl lg:text-3xl animate-slide-right-to-left pointer-events-auto"
               style={{ 
                 animationDelay: `${idx * 0.2}s`,
+                top: '50%',
+                transform: 'translateY(-50%)',
               }}
               title={ref.name}
             >

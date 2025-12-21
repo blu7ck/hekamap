@@ -91,14 +91,14 @@ export const ContactModal: React.FC<ContactModalProps> = ({ isOpen, onClose }) =
               placeholder="Adınız"
               value={formData.firstName}
               onChange={(e) => setFormData({ ...formData, firstName: e.target.value })}
-              className="w-full bg-stone-50 border border-stone-200 rounded-xl px-4 py-3 focus:outline-none focus:border-emerald-500 transition-colors text-amber-900 placeholder:text-amber-700"
+              className="w-full bg-stone-50 border border-stone-200 rounded-xl px-4 py-3 focus:outline-none focus:border-emerald-500 transition-colors text-stone-900 placeholder:text-stone-500"
             />
             <input
               type="text"
               placeholder="Soyadınız"
               value={formData.lastName}
               onChange={(e) => setFormData({ ...formData, lastName: e.target.value })}
-              className="w-full bg-stone-50 border border-stone-200 rounded-xl px-4 py-3 focus:outline-none focus:border-emerald-500 transition-colors text-amber-900 placeholder:text-amber-700"
+              className="w-full bg-stone-50 border border-stone-200 rounded-xl px-4 py-3 focus:outline-none focus:border-emerald-500 transition-colors text-stone-900 placeholder:text-stone-500"
             />
           </div>
           <input
@@ -119,7 +119,7 @@ export const ContactModal: React.FC<ContactModalProps> = ({ isOpen, onClose }) =
           <select
             value={formData.subject}
             onChange={(e) => setFormData({ ...formData, subject: e.target.value })}
-            className="w-full bg-stone-50 border border-stone-200 rounded-xl px-4 py-3 focus:outline-none focus:border-emerald-500 transition-colors text-amber-900"
+            className="w-full bg-stone-50 border border-stone-200 rounded-xl px-4 py-3 focus:outline-none focus:border-emerald-500 transition-colors text-stone-900"
           >
             <option value="">Konu Seçiniz</option>
             <option>Lidar Hizmeti</option>
