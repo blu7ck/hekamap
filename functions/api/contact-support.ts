@@ -4,6 +4,7 @@ import { sendMailgunEmail } from './mailgun';
 /**
  * Contact support endpoint - public, no authentication required
  * Sends email directly to halit@hekamap.com via Mailgun
+ * Uses contact@notify.hekamap.com as sender (different from auth@ for account/password emails)
  */
 type Env = {
   MAILGUN_API_KEY: string;
@@ -38,7 +39,7 @@ export const onRequest: PagesFunction<Env> = async (context) => {
   try {
     const emailResult = await sendMailgunEmail(context.env, {
       to: contactEmail,
-      from: 'auth@notify.hekamap.com',
+      from: 'contact@notify.hekamap.com',
       replyTo: email,
       subject: `İletişim Formu: ${subject || 'Genel'}`,
       html: `

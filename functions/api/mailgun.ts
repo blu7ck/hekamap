@@ -25,7 +25,8 @@ export async function sendMailgunEmail(
   const domain = env.MAILGUN_DOMAIN;
   
   // Production domain: notify.hekamap.com
-  // Gönderici adresi: auth@notify.hekamap.com
+  // Default gönderici: auth@notify.hekamap.com (hesap oluşturma, şifre yenileme)
+  // İletişim formu: contact@notify.hekamap.com (explicit olarak contact-support.ts'de belirtilir)
   const from = options.from || `auth@notify.hekamap.com`;
 
   const formData = new FormData();
