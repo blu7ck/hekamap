@@ -1,8 +1,11 @@
 import type { PagesFunction, Response as CfResponse } from '@cloudflare/workers-types';
 import { sendMailgunEmail } from './mailgun';
-import type { Env as BaseEnv } from './verify-token';
 
-type Env = BaseEnv & {
+/**
+ * Contact support endpoint - public, no authentication required
+ * Sends email directly to halit@hekamap.com via Mailgun
+ */
+type Env = {
   MAILGUN_API_KEY: string;
   MAILGUN_DOMAIN: string;
   SUPPORT_EMAIL?: string;

@@ -1,6 +1,8 @@
-import type { Env } from './verify-token';
-
-type MailgunEnv = Env & {
+/**
+ * Mailgun email sending utility
+ * Independent of Supabase/authentication - only requires Mailgun credentials
+ */
+type MailgunEnv = {
   MAILGUN_API_KEY: string;
   MAILGUN_DOMAIN: string;
 };
