@@ -4,6 +4,7 @@ import type { Request as CfRequest } from '@cloudflare/workers-types';
 export interface Env {
   SUPABASE_JWKS_URL: string;
   SUPABASE_URL: string;
+  SUPABASE_JWT_SECRET?: string; // Optional fallback for HS256 tokens (legacy)
 }
 
 interface JWKSResponse {
@@ -24,7 +25,8 @@ const jwksCache = new Map<string, { keys: JWKSResponse; expiresAt: number }>();
 const CACHE_TTL = 60 * 60 * 1000; // 1 hour
 
 async function fetchJwks(env: Env): Promise<JWKSResponse> {
-  const url = env.SUPABASE_JWKS_URL || `${env.SUPABASE_URL}/auth/v1/jwks`;
+  // Correct Supabase JWKS endpoint: .well-known/jwks.json
+  const url = env.SUPABASE_JWKS_URL || `${env.SUPABASE_URL}/auth/v1/.well-known/jwks.json`;
   
   // Check cache
   const cached = jwksCache.get(url);
@@ -32,7 +34,7 @@ async function fetchJwks(env: Env): Promise<JWKSResponse> {
     return cached.keys;
   }
 
-  // Fetch JWKS
+  // Fetch JWKS (public endpoint, no auth needed)
   const response = await fetch(url, {
     headers: {
       'Accept': 'application/json',
@@ -91,6 +93,31 @@ export type VerifyResult =
 
 export async function verifySupabaseToken(token: string, env: Env): Promise<VerifyResult> {
   try {
+    // Decode JWT header to check algorithm
+    const parts = token.split('.');
+    if (parts.length !== 3) {
+      return { valid: false, error: 'Invalid JWT format' };
+    }
+
+    let header: any;
+    try {
+      header = JSON.parse(atob(parts[0]));
+    } catch {
+      return { valid: false, error: 'Invalid JWT header' };
+    }
+
+    const alg = header.alg || 'ES256';
+
+    // If HS256 and JWT_SECRET available, use symmetric verification
+    if (alg === 'HS256' && env.SUPABASE_JWT_SECRET) {
+      const secret = new TextEncoder().encode(env.SUPABASE_JWT_SECRET);
+      const { payload } = await jwtVerify(token, secret, {
+        issuer: 'supabase',
+      });
+      return { valid: true, payload };
+    }
+
+    // Use JWKS for ES256/RS256 tokens (Supabase's default)
     const publicKey = await getPublicKey(token, env);
     const { payload } = await jwtVerify(token, publicKey, {
       issuer: 'supabase',
