@@ -36,6 +36,23 @@ export function getSupabaseUserClient(
 }
 
 /**
+ * Check if user is owner
+ * Uses RPC function for efficient role checking
+ */
+export async function checkIsOwner(
+  env: Env & { SUPABASE_SERVICE_ROLE_KEY: string },
+  userId: string
+): Promise<boolean> {
+  const supabase = getSupabaseAdmin(env);
+  const { data, error } = await supabase.rpc('is_owner', { user_id: userId });
+  if (error) {
+    console.warn('[checkIsOwner] RPC failed:', error.message);
+    return false;
+  }
+  return !!data;
+}
+
+/**
  * Check if user is owner or admin
  * Uses RPC function for efficient role checking
  */
