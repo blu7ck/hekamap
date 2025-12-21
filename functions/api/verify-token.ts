@@ -4,6 +4,7 @@ import type { Request as CfRequest } from '@cloudflare/workers-types';
 export interface Env {
   SUPABASE_JWKS_URL: string;
   SUPABASE_URL: string;
+  SUPABASE_SERVICE_ROLE_KEY?: string; // Required for Admin API fallback if JWKS fails
   SUPABASE_JWT_SECRET?: string; // Optional fallback for HS256 tokens (legacy)
 }
 
@@ -91,6 +92,57 @@ export type VerifyResult =
   | { valid: true; payload: JWTPayload }
   | { valid: false; error: string };
 
+// Fallback: Verify token via Supabase Admin API (bypasses JWKS issues)
+async function verifyViaAdminAPI(token: string, env: Env): Promise<VerifyResult> {
+  if (!env.SUPABASE_SERVICE_ROLE_KEY) {
+    return { valid: false, error: 'Service role key required for Admin API fallback' };
+  }
+
+  try {
+    // Use Supabase Admin API to get user info (validates token)
+    const response = await fetch(`${env.SUPABASE_URL}/auth/v1/user`, {
+      headers: {
+        'Authorization': `Bearer ${token}`,
+        'apikey': env.SUPABASE_SERVICE_ROLE_KEY,
+        'Content-Type': 'application/json',
+      },
+    });
+
+    if (!response.ok) {
+      return { valid: false, error: `Token verification failed: ${response.status} ${response.statusText}` };
+    }
+
+    const user = await response.json();
+    
+    // Decode JWT to get payload for return value
+    const parts = token.split('.');
+    if (parts.length !== 3) {
+      return { valid: false, error: 'Invalid JWT format' };
+    }
+
+    let payload: any;
+    try {
+      payload = JSON.parse(atob(parts[1]));
+    } catch {
+      return { valid: false, error: 'Invalid JWT payload' };
+    }
+    
+    // Verify user ID matches token subject
+    if (user.id !== payload.sub) {
+      return { valid: false, error: 'Token user mismatch' };
+    }
+
+    // Verify issuer
+    if (payload.iss && !payload.iss.includes('supabase')) {
+      return { valid: false, error: 'Invalid token issuer' };
+    }
+
+    return { valid: true, payload };
+  } catch (err: any) {
+    return { valid: false, error: err?.message || 'Admin API verification failed' };
+  }
+}
+
 export async function verifySupabaseToken(token: string, env: Env): Promise<VerifyResult> {
   try {
     // Decode JWT header to check algorithm
@@ -117,12 +169,18 @@ export async function verifySupabaseToken(token: string, env: Env): Promise<Veri
       return { valid: true, payload };
     }
 
-    // Use JWKS for ES256/RS256 tokens (Supabase's default)
-    const publicKey = await getPublicKey(token, env);
-    const { payload } = await jwtVerify(token, publicKey, {
-      issuer: 'supabase',
-    });
-    return { valid: true, payload };
+    // Try JWKS for ES256/RS256 tokens (Supabase's default)
+    try {
+      const publicKey = await getPublicKey(token, env);
+      const { payload } = await jwtVerify(token, publicKey, {
+        issuer: 'supabase',
+      });
+      return { valid: true, payload };
+    } catch (jwksError: any) {
+      // If JWKS fails (e.g., 401 from Cloudflare Workers), fallback to Admin API
+      console.warn('[verify-token] JWKS verification failed, using Admin API fallback:', jwksError.message);
+      return await verifyViaAdminAPI(token, env);
+    }
   } catch (err: any) {
     return { valid: false, error: err?.message || 'invalid token' };
   }
