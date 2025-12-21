@@ -1,0 +1,29 @@
+{
+  "name": "hekamap-backend",
+  "version": "1.0.0",
+  "description": "HekaMap Hetzner Backend API for 3D asset processing",
+  "main": "dist/index.js",
+  "type": "module",
+  "scripts": {
+    "dev": "tsx watch src/index.ts",
+    "build": "tsc",
+    "start": "node dist/index.js",
+    "docker:build": "docker build -t hekamap/backend-api:latest .",
+    "docker:run": "docker run -p 3000:3000 --env-file .env hekamap/backend-api:latest"
+  },
+  "dependencies": {
+    "express": "^4.21.1",
+    "@supabase/supabase-js": "^2.48.0",
+    "@aws-sdk/client-s3": "^3.745.0",
+    "dotenv": "^16.4.7",
+    "cors": "^2.8.5"
+  },
+  "devDependencies": {
+    "@types/express": "^5.0.0",
+    "@types/node": "^22.14.0",
+    "@types/cors": "^2.8.17",
+    "tsx": "^4.19.2",
+    "typescript": "^5.8.2"
+  }
+}
+

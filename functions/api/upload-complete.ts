@@ -4,6 +4,8 @@ import { getSupabaseAdmin, checkProjectAccess } from './supabase-admin';
 
 type Env = BaseEnv & {
   SUPABASE_SERVICE_ROLE_KEY: string;
+  HETZNER_BACKEND_API_URL?: string;
+  HETZNER_API_SECRET_KEY?: string;
 };
 
 type JobType = 'normalize' | 'tileset' | 'pointcloud';
@@ -43,7 +45,7 @@ export const onRequest: PagesFunction<Env> = async (context) => {
   // Fetch asset
   const { data: asset, error: assetError } = await supabaseAdmin
     .from('project_assets')
-    .select('id, project_id, asset_key, processing_status')
+    .select('id, project_id, asset_key, source_format, processing_status')
     .eq('id', asset_id)
     .single();
 
@@ -54,8 +56,18 @@ export const onRequest: PagesFunction<Env> = async (context) => {
     return new Response('Asset/project mismatch', { status: 400 }) as unknown as CfResponse;
   }
 
-  // Determine job type
-  const jobType: JobType = asset_category === 'single_model' ? 'normalize' : 'tileset';
+  // Determine job type based on category and source format
+  let jobType: JobType;
+  if (asset_category === 'single_model') {
+    jobType = 'normalize';
+  } else {
+    // large_area
+    if (asset.source_format === 'las' || asset.source_format === 'laz') {
+      jobType = 'pointcloud';
+    } else {
+      jobType = 'tileset';
+    }
+  }
 
   // Insert job
   const { data: job, error: jobError } = await supabaseAdmin
@@ -86,6 +98,32 @@ export const onRequest: PagesFunction<Env> = async (context) => {
   if (updateError) {
     console.error('project_assets update error', updateError);
     return new Response('Failed to update asset status', { status: 500 }) as unknown as CfResponse;
+  }
+
+  // Optionally notify Hetzner Backend API (if configured)
+  // This is optional - the backend can also poll Supabase directly
+  if (context.env.HETZNER_BACKEND_API_URL && context.env.HETZNER_API_SECRET_KEY) {
+    try {
+      const backendRes = await fetch(`${context.env.HETZNER_BACKEND_API_URL}/api/jobs/create`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'X-API-Key': context.env.HETZNER_API_SECRET_KEY,
+        },
+        body: JSON.stringify({
+          project_id,
+          asset_id,
+          asset_category,
+        }),
+      });
+
+      if (!backendRes.ok) {
+        console.warn('Hetzner backend notification failed, but job is queued in Supabase');
+      }
+    } catch (err) {
+      console.warn('Failed to notify Hetzner backend, but job is queued in Supabase:', err);
+      // Don't fail the request - job is already in Supabase
+    }
   }
 
   return new Response(
