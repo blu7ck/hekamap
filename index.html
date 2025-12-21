@@ -3,27 +3,39 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <!-- Content Security Policy: Allow CesiumJS (WebAssembly/eval) and Cloudflare Insights -->
-    <meta http-equiv="Content-Security-Policy" content="script-src 'self' 'unsafe-inline' 'unsafe-eval' 'wasm-unsafe-eval' https://static.cloudflareinsights.com; connect-src 'self' https://cloudflareinsights.com https://*.cloudflareinsights.com https://*.cesium.com https://api.mapbox.com https://*.mapbox.com; img-src 'self' data: https: blob:; worker-src 'self' blob:;">
-    <title>HEKAMAP | Geleceği Konumlandırıyoruz</title>
-    <link href="https://fonts.googleapis.com/css2?family=Oswald:wght@300;400;500;700&family=Inter:wght@300;400;500&display=swap" rel="stylesheet">
-    <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns=%27http://www.w3.org/2000/svg%27 viewBox=%270 0 100 100%27%3E%3Crect width=%27100%27 height=%27100%27 fill=%27%23000000%27/%3E%3Ctext x=%2710%27 y=%2755%27 font-size=%2745%27 fill=%27%2310b981%27%3EH%3C/text%3E%3C/svg%3E">
-    <!-- Fix Cloudflare Insights integrity hash mismatch -->
+    <!-- Fix Cloudflare Insights integrity hash mismatch - Must run before CSP -->
     <script>
       (function() {
         function fixCloudflareBeacon() {
-          var scripts = document.querySelectorAll('script[src*="cloudflareinsights.com"][integrity]');
+          var scripts = document.querySelectorAll('script[src*="cloudflareinsights.com"]');
           scripts.forEach(function(script) {
-            script.removeAttribute('integrity');
+            if (script.hasAttribute('integrity')) {
+              script.removeAttribute('integrity');
+            }
+            if (script.crossOrigin) {
+              script.crossOrigin = 'anonymous';
+            }
           });
         }
-        fixCloudflareBeacon();
-        var observer = new MutationObserver(fixCloudflareBeacon);
-        if (document.documentElement) {
-          observer.observe(document.documentElement, { childList: true, subtree: true });
+        // Run immediately
+        if (document.readyState === 'loading') {
+          document.addEventListener('DOMContentLoaded', fixCloudflareBeacon);
+        } else {
+          fixCloudflareBeacon();
         }
+        // Monitor for dynamically added scripts
+        var observer = new MutationObserver(fixCloudflareBeacon);
+        observer.observe(document.documentElement || document.body || document, { 
+          childList: true, 
+          subtree: true 
+        });
       })();
     </script>
+    <!-- Content Security Policy: Allow CesiumJS (WebAssembly/eval) and Cloudflare Insights -->
+    <meta http-equiv="Content-Security-Policy" content="script-src 'self' 'unsafe-inline' 'unsafe-eval' 'wasm-unsafe-eval' https://static.cloudflareinsights.com; connect-src 'self' https://cloudflareinsights.com https://static.cloudflareinsights.com https://cesium.com https://www.cesium.com https://api.cesium.com https://api.mapbox.com https://api.tiles.mapbox.com; img-src 'self' data: https: blob:; worker-src 'self' blob:;">
+    <title>HEKAMAP | Geleceği Konumlandırıyoruz</title>
+    <link href="https://fonts.googleapis.com/css2?family=Oswald:wght@300;400;500;700&family=Inter:wght@300;400;500&display=swap" rel="stylesheet">
+    <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns=%27http://www.w3.org/2000/svg%27 viewBox=%270 0 100 100%27%3E%3Crect width=%27100%27 height=%27100%27 fill=%27%23000000%27/%3E%3Ctext x=%2710%27 y=%2755%27 font-size=%2745%27 fill=%27%2310b981%27%3EH%3C/text%3E%3C/svg%3E">
 </head>
   <body class="bg-black text-white antialiased">
     <div id="root"></div>
