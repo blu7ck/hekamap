@@ -59,6 +59,7 @@ CREATE POLICY votes_update_own ON public.votes
   FOR UPDATE USING ((select auth.uid()) = user_id);
 
 -- reports: Consolidate multiple SELECT policies into one
+DROP POLICY IF EXISTS reports_select ON public.reports;
 DROP POLICY IF EXISTS reports_select_own ON public.reports;
 DROP POLICY IF EXISTS reports_select_mod ON public.reports;
 DROP POLICY IF EXISTS reports_insert_auth ON public.reports;
@@ -106,8 +107,9 @@ CREATE POLICY project_versions_insert_owner ON public.project_versions
   );
 
 -- project_access: Consolidate multiple policies (select_owner + all_owner -> all_owner)
-DROP POLICY IF EXISTS project_access_select_owner ON public.project_access;
+-- Note: Drop in correct order - drop all_owner first if it exists, then select_owner
 DROP POLICY IF EXISTS project_access_all_owner ON public.project_access;
+DROP POLICY IF EXISTS project_access_select_owner ON public.project_access;
 CREATE POLICY project_access_all_owner ON public.project_access 
   FOR ALL USING (
     EXISTS (SELECT 1 FROM public.projects p WHERE p.id = project_id AND p.owner_id = (select auth.uid()))
@@ -247,8 +249,10 @@ CREATE INDEX IF NOT EXISTS idx_votes_user_id ON public.votes(user_id);
 -- 3. OPTIMIZE RPC FUNCTIONS: Optimize auth.uid() calls in functions
 ----------------------------
 
--- list_project_assets: Optimize auth.uid() call
-CREATE OR REPLACE FUNCTION public.list_project_assets(project_id UUID)
+-- list_project_assets: Optimize auth.uid() call and fix ambiguous column reference
+-- Note: Must DROP first because we're changing parameter name
+DROP FUNCTION IF EXISTS public.list_project_assets(UUID);
+CREATE FUNCTION public.list_project_assets(p_project_id UUID)
 RETURNS TABLE (
   id UUID,
   name TEXT,
@@ -272,7 +276,7 @@ SECURITY DEFINER
 SET search_path = public
 AS $$
 BEGIN
-  IF NOT EXISTS (SELECT 1 FROM public.projects p WHERE p.id = project_id AND p.owner_id = (select auth.uid())) THEN
+  IF NOT EXISTS (SELECT 1 FROM public.projects p WHERE p.id = p_project_id AND p.owner_id = (select auth.uid())) THEN
     RAISE EXCEPTION 'Forbidden';
   END IF;
 
@@ -284,7 +288,7 @@ BEGIN
     pa.raw_file_retention_days, pa.raw_file_deleted_at,
     pa.uploaded_by, pa.created_at, pa.processed_at
   FROM public.project_assets pa
-  WHERE pa.project_id = project_id
+  WHERE pa.project_id = p_project_id
   ORDER BY pa.created_at DESC;
 END;
 $$;

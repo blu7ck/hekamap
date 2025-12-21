@@ -94,7 +94,8 @@ export const WorkspacePage: React.FC = () => {
   const loadAssets = async (projectId: string) => {
     setError(null);
     try {
-      const { data, error } = await supabase.rpc('list_project_assets', { project_id: projectId });
+      // Note: Function parameter is p_project_id to avoid ambiguity
+      const { data, error } = await supabase.rpc('list_project_assets', { p_project_id: projectId });
       if (error) {
         console.error('loadAssets error:', error);
         setError(`Varlıklar alınamadı: ${error.message || 'Bilinmeyen hata'}`);

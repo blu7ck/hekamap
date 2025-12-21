@@ -41,10 +41,17 @@ export const onRequest: PagesFunction<Env> = async (context) => {
   }
 
   const token = getBearerToken(context.request);
-  if (!token) return new Response('Unauthorized', { status: 401 }) as unknown as CfResponse;
+  if (!token) {
+    console.error('[upload-url] No token provided');
+    return new Response('Unauthorized: No token', { status: 401 }) as unknown as CfResponse;
+  }
 
   const verified = await verifySupabaseToken(token, context.env);
-  if (!verified.valid) return new Response('Unauthorized', { status: 401 }) as unknown as CfResponse;
+  if (!verified.valid) {
+    const errorMsg = 'error' in verified ? verified.error : 'Invalid token';
+    console.error('[upload-url] Token verification failed:', errorMsg);
+    return new Response(`Unauthorized: ${errorMsg}`, { status: 401 }) as unknown as CfResponse;
+  }
   const userId = verified.payload.sub as string;
 
   let body: any;
