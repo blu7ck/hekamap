@@ -56,10 +56,13 @@ export async function sendMailgunEmail(
       body: formData,
     });
 
+    // Read response body (can only be read once)
+    const responseText = await response.text();
+    
     if (!response.ok) {
       let errorMessage = 'Mailgun API error';
       try {
-        const data = await response.json();
+        const data = JSON.parse(responseText);
         console.error('Mailgun API error:', {
           status: response.status,
           statusText: response.statusText,
@@ -67,19 +70,19 @@ export async function sendMailgunEmail(
         });
         errorMessage = data.message || data.error?.message || `HTTP ${response.status}: ${response.statusText}`;
       } catch (parseError) {
-        // JSON parse failed, use text
-        const text = await response.text();
+        // JSON parse failed, use text directly
         console.error('Mailgun API error (non-JSON):', {
           status: response.status,
           statusText: response.statusText,
-          text: text.substring(0, 200),
+          text: responseText.substring(0, 200),
         });
         errorMessage = `HTTP ${response.status}: ${response.statusText}`;
       }
       return { ok: false, error: errorMessage };
     }
 
-    const data = await response.json();
+    // Success: parse JSON response
+    const data = JSON.parse(responseText);
     return { ok: true, messageId: data.id };
   } catch (err: any) {
     console.error('Mailgun network/exception error:', err);
