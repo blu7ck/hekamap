@@ -245,31 +245,52 @@ export const WorkspacePage: React.FC = () => {
     setMessage(null);
 
     try {
+      // 1. Kullanıcının organization'larını al
+      const { data: orgs, error: orgsError } = await supabase.rpc('list_organizations');
+      if (orgsError) throw orgsError;
+
+      let orgId: string;
+
+      // 2. Eğer organization yoksa, otomatik bir default organization oluştur
+      if (!orgs || orgs.length === 0) {
+        const defaultOrgName = 'My Organization';
+        const defaultOrgSlug = 'my-organization';
+        const { data: newOrg, error: createOrgError } = await supabase.rpc('create_organization', {
+          p_name: defaultOrgName,
+          p_slug: defaultOrgSlug,
+          p_description: 'Default organization',
+        });
+        if (createOrgError) throw createOrgError;
+        orgId = newOrg;
+      } else {
+        // İlk organization'ı kullan
+        orgId = orgs[0].id;
+      }
+
+      // 3. Proje slug'ını oluştur
       const slug = newProjectName
         .toLowerCase()
         .replace(/[^a-z0-9]+/g, '-')
         .replace(/^-|-$/g, '');
 
-      const { data, error } = await supabase
-        .from('projects')
-        .insert({
-          name: newProjectName.trim(),
-          description: newProjectDescription.trim() || null,
-          slug: slug || `project-${Date.now()}`,
-          owner_id: profile?.id,
-        })
-        .select('id, name')
-        .single();
+      // 4. Projeyi organization ile oluştur (RPC fonksiyonu kullan)
+      const { data: projectId, error: createError } = await supabase.rpc('create_project_with_org', {
+        p_org_id: orgId,
+        p_folder_id: null,
+        p_name: newProjectName.trim(),
+        p_slug: slug || `project-${Date.now()}`,
+        p_description: newProjectDescription.trim() || null,
+      });
 
-      if (error) throw error;
+      if (createError) throw createError;
 
       setMessage('Proje oluşturuldu.');
       setShowCreateProjectModal(false);
       setNewProjectName('');
       setNewProjectDescription('');
       await loadProjects();
-      if (data) {
-        setSelectedProject(data.id);
+      if (projectId) {
+        setSelectedProject(projectId);
       }
     } catch (err: any) {
       setError(err.message || 'Proje oluşturulamadı.');

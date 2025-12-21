@@ -19,6 +19,21 @@ export default defineConfig(({ mode }) => {
         alias: {
           '@': path.resolve(__dirname, '.'),
         }
-      }
+      },
+      build: {
+        outDir: 'dist',
+        assetsDir: 'assets',
+        sourcemap: false,
+        rollupOptions: {
+          output: {
+            // Asset dosyaları için hash kullan (cache busting için)
+            assetFileNames: 'assets/[name]-[hash][extname]',
+            chunkFileNames: 'assets/[name]-[hash].js',
+            entryFileNames: 'assets/[name]-[hash].js',
+          },
+        },
+        // Chunk size warning'ini artır (CesiumJS büyük)
+        chunkSizeWarningLimit: 1000,
+      },
     };
 });
