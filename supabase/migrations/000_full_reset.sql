@@ -10,7 +10,7 @@
 DO $$
 BEGIN
   PERFORM 1;
-  IF EXISTS (SELECT 1 FROM pg_proc WHERE proname IN ('get_accessible_projects','list_project_assets','list_viewer_assets','set_user_role','is_owner','is_owner_or_admin','get_user_role','get_project_layers','create_project_layer','set_project_layer_visibility')) THEN
+  IF EXISTS (SELECT 1 FROM pg_proc WHERE proname IN ('get_accessible_projects','list_project_assets','list_viewer_assets','set_user_role','is_owner','is_owner_or_admin','get_user_role','get_project_layers','create_project_layer','set_project_layer_visibility','list_organizations','create_organization','list_project_folders','create_project_folder','create_project_with_org')) THEN
     DROP FUNCTION IF EXISTS public.get_accessible_projects CASCADE;
     DROP FUNCTION IF EXISTS public.list_project_assets(UUID) CASCADE;
     DROP FUNCTION IF EXISTS public.list_viewer_assets(UUID) CASCADE;
@@ -21,6 +21,11 @@ BEGIN
     DROP FUNCTION IF EXISTS public.get_project_layers(UUID) CASCADE;
     DROP FUNCTION IF EXISTS public.create_project_layer(UUID, TEXT, TEXT, JSONB, TEXT, FLOAT, INTEGER, UUID) CASCADE;
     DROP FUNCTION IF EXISTS public.set_project_layer_visibility(UUID, BOOLEAN) CASCADE;
+    DROP FUNCTION IF EXISTS public.list_organizations() CASCADE;
+    DROP FUNCTION IF EXISTS public.create_organization(TEXT, TEXT, TEXT) CASCADE;
+    DROP FUNCTION IF EXISTS public.list_project_folders(UUID) CASCADE;
+    DROP FUNCTION IF EXISTS public.create_project_folder(UUID, UUID, TEXT, TEXT, INTEGER) CASCADE;
+    DROP FUNCTION IF EXISTS public.create_project_with_org(UUID, UUID, TEXT, TEXT, TEXT) CASCADE;
   END IF;
 END$$;
 
