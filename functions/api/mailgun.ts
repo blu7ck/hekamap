@@ -5,6 +5,7 @@
 type MailgunEnv = {
   MAILGUN_API_KEY: string;
   MAILGUN_DOMAIN: string;
+  MAILGUN_REGION?: 'us' | 'eu'; // Optional: 'eu' for EU region, default is 'us'
 };
 
 export interface EmailOptions {
@@ -40,8 +41,12 @@ export async function sendMailgunEmail(
   }
 
   try {
-    // Mailgun API endpoint (EU domain için farklı olabilir, şimdilik US kullanıyoruz)
-    const apiUrl = `https://api.mailgun.net/v3/${domain}/messages`;
+    // Mailgun API endpoint
+    // EU domains: https://api.eu.mailgun.net/v3/
+    // US domains: https://api.mailgun.net/v3/
+    const region = env.MAILGUN_REGION || 'us';
+    const apiBase = region === 'eu' ? 'https://api.eu.mailgun.net/v3' : 'https://api.mailgun.net/v3';
+    const apiUrl = `${apiBase}/${domain}/messages`;
     
     const response = await fetch(apiUrl, {
       method: 'POST',
@@ -51,15 +56,34 @@ export async function sendMailgunEmail(
       body: formData,
     });
 
-    const data = await response.json();
     if (!response.ok) {
-      console.error('Mailgun API error:', data);
-      return { ok: false, error: data.message || 'Mailgun API error' };
+      let errorMessage = 'Mailgun API error';
+      try {
+        const data = await response.json();
+        console.error('Mailgun API error:', {
+          status: response.status,
+          statusText: response.statusText,
+          data,
+        });
+        errorMessage = data.message || data.error?.message || `HTTP ${response.status}: ${response.statusText}`;
+      } catch (parseError) {
+        // JSON parse failed, use text
+        const text = await response.text();
+        console.error('Mailgun API error (non-JSON):', {
+          status: response.status,
+          statusText: response.statusText,
+          text: text.substring(0, 200),
+        });
+        errorMessage = `HTTP ${response.status}: ${response.statusText}`;
+      }
+      return { ok: false, error: errorMessage };
     }
+
+    const data = await response.json();
     return { ok: true, messageId: data.id };
   } catch (err: any) {
-    console.error('Mailgun network error:', err);
-    return { ok: false, error: err.message || 'Network error' };
+    console.error('Mailgun network/exception error:', err);
+    return { ok: false, error: err?.message || 'Network error' };
   }
 }
 
