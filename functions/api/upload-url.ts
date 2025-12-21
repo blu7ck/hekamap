@@ -3,7 +3,7 @@ import { PutObjectCommand } from '@aws-sdk/client-s3';
 import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
 import { getBearerToken, verifySupabaseToken, type Env as BaseEnv } from './verify-token';
 import { getR2Client } from './r2-client';
-import { checkProjectAccess, getSupabaseAdmin } from './supabase-admin';
+import { getSupabaseUserClient } from './supabase-admin';
 
 type Env = BaseEnv & {
   R2_ENDPOINT: string;
@@ -11,7 +11,6 @@ type Env = BaseEnv & {
   R2_SECRET_ACCESS_KEY: string;
   R2_PRIVATE_BUCKET: string;
   R2_ALLOWED_UPLOAD_MIME_TYPES?: string;
-  SUPABASE_SERVICE_ROLE_KEY: string;
 };
 
 const parseAllowlist = (list?: string) =>
@@ -83,9 +82,7 @@ export const onRequest: PagesFunction<Env> = async (context) => {
     return new Response('MIME not allowed', { status: 415 }) as unknown as CfResponse;
   }
 
-  const allowed = await checkProjectAccess(context.env, userId, project_id);
-  if (!allowed) return new Response('Forbidden', { status: 403 }) as unknown as CfResponse;
-
+  // Generate R2 signed URL for upload
   const key = `raw/${project_id}/${userId}/${Date.now()}-${file_name}`;
   const s3 = getR2Client(context.env);
 
@@ -97,16 +94,17 @@ export const onRequest: PagesFunction<Env> = async (context) => {
 
   const signed_url = await getSignedUrl(s3, command, { expiresIn: 300 });
 
-  // Insert metadata into project_assets (pending processing)
+  // Insert metadata into project_assets using user-scoped client (RLS enforces access control)
+  // RLS policy project_assets_insert_owner ensures only project owners can insert assets
   try {
-    const supabaseAdmin = getSupabaseAdmin(context.env);
+    const supabaseUser = getSupabaseUserClient(context.env, token);
     const source_format = detectSourceFormat(file_name, mime_type);
     const retentionDays =
       typeof raw_file_retention_days === 'number' && raw_file_retention_days > 0
         ? Math.floor(raw_file_retention_days)
         : null;
 
-    const { data, error } = await supabaseAdmin
+    const { data, error } = await supabaseUser
       .from('project_assets')
       .insert({
         project_id,
@@ -124,8 +122,12 @@ export const onRequest: PagesFunction<Env> = async (context) => {
       .single();
 
     if (error) {
-      console.error('project_assets insert error', error);
-      return new Response('Failed to create asset record', { status: 500 }) as unknown as CfResponse;
+      console.error('[upload-url] project_assets insert error:', error);
+      // RLS will return 403/Forbidden if user doesn't have access
+      if (error.code === '42501' || error.message.includes('permission denied') || error.message.includes('RLS')) {
+        return new Response('Forbidden: No access to this project', { status: 403 }) as unknown as CfResponse;
+      }
+      return new Response(`Failed to create asset record: ${error.message}`, { status: 500 }) as unknown as CfResponse;
     }
 
     return new Response(

@@ -1,9 +1,9 @@
 import type { PagesFunction, Response as CfResponse } from '@cloudflare/workers-types';
 import { getBearerToken, verifySupabaseToken, type Env as BaseEnv } from './verify-token';
-import { getSupabaseAdmin, checkProjectAccess } from './supabase-admin';
+import { getSupabaseAdmin, getSupabaseUserClient } from './supabase-admin';
 
 type Env = BaseEnv & {
-  SUPABASE_SERVICE_ROLE_KEY: string;
+  SUPABASE_SERVICE_ROLE_KEY: string; // Required for processing_jobs insert (admin operation)
   HETZNER_BACKEND_API_URL?: string;
   HETZNER_API_SECRET_KEY?: string;
 };
@@ -37,24 +37,27 @@ export const onRequest: PagesFunction<Env> = async (context) => {
     return new Response('asset_category must be single_model or large_area', { status: 400 }) as unknown as CfResponse;
   }
 
-  const allowed = await checkProjectAccess(context.env, userId, project_id);
-  if (!allowed) return new Response('Forbidden', { status: 403 }) as unknown as CfResponse;
-
-  const supabaseAdmin = getSupabaseAdmin(context.env);
-
-  // Fetch asset
-  const { data: asset, error: assetError } = await supabaseAdmin
+  // Verify access by fetching asset with user-scoped client (RLS enforces access control)
+  const supabaseUser = getSupabaseUserClient(context.env, token);
+  const { data: asset, error: assetError } = await supabaseUser
     .from('project_assets')
     .select('id, project_id, asset_key, source_format, processing_status')
     .eq('id', asset_id)
     .single();
 
   if (assetError || !asset) {
+    // RLS will return error if user doesn't have access, or asset doesn't exist
+    if (assetError?.code === '42501' || assetError?.message?.includes('permission denied') || assetError?.message?.includes('RLS')) {
+      return new Response('Forbidden: No access to this asset', { status: 403 }) as unknown as CfResponse;
+    }
     return new Response('Asset not found', { status: 404 }) as unknown as CfResponse;
   }
   if (asset.project_id !== project_id) {
     return new Response('Asset/project mismatch', { status: 400 }) as unknown as CfResponse;
   }
+
+  // Use admin client for processing_jobs (system operation, not user-scoped)
+  const supabaseAdmin = getSupabaseAdmin(context.env);
 
   // Determine job type based on category and source format
   let jobType: JobType;

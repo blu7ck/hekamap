@@ -3,7 +3,7 @@ import { GetObjectCommand } from '@aws-sdk/client-s3';
 import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
 import { getBearerToken, verifySupabaseToken, type Env as BaseEnv } from './verify-token';
 import { getR2Client } from './r2-client';
-import { checkProjectAccess } from './supabase-admin';
+import { getSupabaseUserClient } from './supabase-admin';
 
 type Env = BaseEnv & {
   R2_ENDPOINT: string;
@@ -12,7 +12,6 @@ type Env = BaseEnv & {
   R2_PRIVATE_BUCKET: string;
   R2_SIGNED_URL_TTL_SECONDS?: string | number;
   R2_SIGNED_URL_CONTENT_DISPOSITION?: string;
-  SUPABASE_SERVICE_ROLE_KEY: string;
 };
 
 export const onRequest: PagesFunction<Env> = async (context) => {
@@ -39,8 +38,23 @@ export const onRequest: PagesFunction<Env> = async (context) => {
     return new Response('project_id and asset_key required', { status: 400 }) as unknown as CfResponse;
   }
 
-  const allowed = await checkProjectAccess(context.env, userId, project_id);
-  if (!allowed) return new Response('Forbidden', { status: 403 }) as unknown as CfResponse;
+  // Verify access by querying asset with user-scoped client (RLS enforces access control)
+  // Query by asset_key to verify user has access to this asset
+  const supabaseUser = getSupabaseUserClient(context.env, token);
+  const { data: asset, error: assetError } = await supabaseUser
+    .from('project_assets')
+    .select('id, project_id')
+    .eq('asset_key', asset_key)
+    .eq('project_id', project_id)
+    .maybeSingle();
+
+  if (assetError || !asset) {
+    // RLS will return error if user doesn't have access, or asset doesn't exist
+    if (assetError?.code === '42501' || assetError?.message?.includes('permission denied') || assetError?.message?.includes('RLS')) {
+      return new Response('Forbidden: No access to this asset', { status: 403 }) as unknown as CfResponse;
+    }
+    return new Response('Asset not found', { status: 404 }) as unknown as CfResponse;
+  }
 
   const s3 = getR2Client(context.env);
   const disposition = context.env.R2_SIGNED_URL_CONTENT_DISPOSITION || 'inline';
