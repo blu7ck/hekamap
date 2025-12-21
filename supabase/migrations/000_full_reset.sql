@@ -10,7 +10,7 @@
 DO $$
 BEGIN
   PERFORM 1;
-  IF EXISTS (SELECT 1 FROM pg_proc WHERE proname IN ('get_accessible_projects','list_project_assets','list_viewer_assets','set_user_role','is_owner','is_owner_or_admin','get_user_role')) THEN
+  IF EXISTS (SELECT 1 FROM pg_proc WHERE proname IN ('get_accessible_projects','list_project_assets','list_viewer_assets','set_user_role','is_owner','is_owner_or_admin','get_user_role','get_project_layers','create_project_layer','set_project_layer_visibility')) THEN
     DROP FUNCTION IF EXISTS public.get_accessible_projects CASCADE;
     DROP FUNCTION IF EXISTS public.list_project_assets(UUID) CASCADE;
     DROP FUNCTION IF EXISTS public.list_viewer_assets(UUID) CASCADE;
@@ -18,11 +18,15 @@ BEGIN
     DROP FUNCTION IF EXISTS public.is_owner(UUID) CASCADE;
     DROP FUNCTION IF EXISTS public.is_owner_or_admin(UUID) CASCADE;
     DROP FUNCTION IF EXISTS public.get_user_role(UUID) CASCADE;
+    DROP FUNCTION IF EXISTS public.get_project_layers(UUID) CASCADE;
+    DROP FUNCTION IF EXISTS public.create_project_layer(UUID, TEXT, TEXT, JSONB, TEXT, FLOAT, INTEGER, UUID) CASCADE;
+    DROP FUNCTION IF EXISTS public.set_project_layer_visibility(UUID, BOOLEAN) CASCADE;
   END IF;
 END$$;
 
 -- Tables
 DROP TABLE IF EXISTS public.processing_jobs CASCADE;
+DROP TABLE IF EXISTS public.project_layers CASCADE;
 DROP TABLE IF EXISTS public.project_assets CASCADE;
 DROP TABLE IF EXISTS public.security_events CASCADE;
 DROP TABLE IF EXISTS public.rate_limit_logs CASCADE;
@@ -273,6 +277,27 @@ CREATE INDEX idx_project_assets_asset_key ON public.project_assets(asset_key);
 CREATE INDEX idx_project_assets_final_key ON public.project_assets(final_key);
 CREATE INDEX idx_project_assets_processing_status ON public.project_assets(processing_status);
 
+-- Project layers (vector/overlay)
+CREATE TABLE public.project_layers (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  project_id UUID NOT NULL REFERENCES public.projects(id) ON DELETE CASCADE,
+  name TEXT NOT NULL,
+  layer_type TEXT NOT NULL CHECK (layer_type IN ('kml', 'geojson', 'manual_draw', 'asset_boundary')),
+  geometry JSONB, -- GeoJSON feature/geometry
+  color TEXT DEFAULT '#00ff00',
+  opacity FLOAT DEFAULT 1.0 CHECK (opacity >= 0 AND opacity <= 1),
+  visible BOOLEAN DEFAULT TRUE,
+  order_index INTEGER DEFAULT 0,
+  metadata JSONB,
+  source_asset_id UUID REFERENCES public.project_assets(id) ON DELETE SET NULL,
+  created_by UUID REFERENCES auth.users(id) ON DELETE SET NULL,
+  created_at TIMESTAMPTZ DEFAULT NOW(),
+  updated_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+CREATE INDEX idx_project_layers_project ON public.project_layers(project_id);
+CREATE INDEX idx_project_layers_visible ON public.project_layers(project_id, visible, order_index);
+
 -- Processing jobs (queue tracking)
 CREATE TABLE public.processing_jobs (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -459,6 +484,20 @@ CREATE POLICY project_assets_delete_owner ON public.project_assets FOR DELETE US
   EXISTS (SELECT 1 FROM public.projects p WHERE p.id = project_id AND p.owner_id = auth.uid())
 );
 
+-- project_layers (owners only)
+CREATE POLICY project_layers_select_owner ON public.project_layers FOR SELECT USING (
+  EXISTS (SELECT 1 FROM public.projects p WHERE p.id = project_id AND p.owner_id = auth.uid())
+);
+CREATE POLICY project_layers_insert_owner ON public.project_layers FOR INSERT WITH CHECK (
+  EXISTS (SELECT 1 FROM public.projects p WHERE p.id = project_id AND p.owner_id = auth.uid())
+);
+CREATE POLICY project_layers_update_owner ON public.project_layers FOR UPDATE USING (
+  EXISTS (SELECT 1 FROM public.projects p WHERE p.id = project_id AND p.owner_id = auth.uid())
+);
+CREATE POLICY project_layers_delete_owner ON public.project_layers FOR DELETE USING (
+  EXISTS (SELECT 1 FROM public.projects p WHERE p.id = project_id AND p.owner_id = auth.uid())
+);
+
 ----------------------------
 -- RPCs
 ----------------------------
@@ -578,12 +617,118 @@ BEGIN
 END;
 $$;
 
+-- get_project_layers (owner, ordered)
+CREATE OR REPLACE FUNCTION public.get_project_layers(project_id UUID)
+RETURNS TABLE (
+  id UUID,
+  name TEXT,
+  layer_type TEXT,
+  geometry JSONB,
+  color TEXT,
+  opacity FLOAT,
+  visible BOOLEAN,
+  order_index INTEGER,
+  metadata JSONB,
+  source_asset_id UUID,
+  created_by UUID,
+  created_at TIMESTAMPTZ,
+  updated_at TIMESTAMPTZ
+)
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public
+AS $$
+BEGIN
+  IF NOT EXISTS (SELECT 1 FROM public.projects p WHERE p.id = project_id AND p.owner_id = auth.uid()) THEN
+    RAISE EXCEPTION 'Forbidden';
+  END IF;
+
+  RETURN QUERY
+  SELECT
+    pl.id, pl.name, pl.layer_type, pl.geometry, pl.color, pl.opacity, pl.visible,
+    pl.order_index, pl.metadata, pl.source_asset_id, pl.created_by, pl.created_at, pl.updated_at
+  FROM public.project_layers pl
+  WHERE pl.project_id = project_id
+  ORDER BY pl.order_index, pl.created_at DESC;
+END;
+$$;
+
+-- create_project_layer
+CREATE OR REPLACE FUNCTION public.create_project_layer(
+  p_project_id UUID,
+  p_name TEXT,
+  p_layer_type TEXT,
+  p_geometry JSONB,
+  p_color TEXT DEFAULT '#00ff00',
+  p_opacity FLOAT DEFAULT 1.0,
+  p_order_index INTEGER DEFAULT 0,
+  p_source_asset_id UUID DEFAULT NULL
+)
+RETURNS UUID
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public
+AS $$
+DECLARE
+  v_id UUID;
+BEGIN
+  IF NOT EXISTS (SELECT 1 FROM public.projects p WHERE p.id = p_project_id AND p.owner_id = auth.uid()) THEN
+    RAISE EXCEPTION 'Forbidden';
+  END IF;
+
+  IF p_layer_type NOT IN ('kml', 'geojson', 'manual_draw', 'asset_boundary') THEN
+    RAISE EXCEPTION 'Invalid layer_type';
+  END IF;
+
+  INSERT INTO public.project_layers (
+    project_id, name, layer_type, geometry, color, opacity,
+    order_index, metadata, source_asset_id, created_by, created_at, updated_at
+  )
+  VALUES (
+    p_project_id, p_name, p_layer_type, p_geometry, p_color, p_opacity,
+    p_order_index, NULL, p_source_asset_id, auth.uid(), NOW(), NOW()
+  )
+  RETURNING id INTO v_id;
+
+  RETURN v_id;
+END;
+$$;
+
+-- set_project_layer_visibility
+CREATE OR REPLACE FUNCTION public.set_project_layer_visibility(layer_id UUID, is_visible BOOLEAN)
+RETURNS VOID
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public
+AS $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM public.project_layers pl
+    JOIN public.projects p ON p.id = pl.project_id
+    WHERE pl.id = layer_id AND p.owner_id = auth.uid()
+  ) THEN
+    RAISE EXCEPTION 'Forbidden';
+  END IF;
+
+  UPDATE public.project_layers
+  SET visible = is_visible,
+      updated_at = NOW()
+  WHERE id = layer_id;
+END;
+$$;
+
 REVOKE ALL ON FUNCTION public.get_accessible_projects FROM PUBLIC;
 REVOKE ALL ON FUNCTION public.list_project_assets(UUID) FROM PUBLIC;
 REVOKE ALL ON FUNCTION public.list_viewer_assets(UUID) FROM PUBLIC;
+REVOKE ALL ON FUNCTION public.get_project_layers(UUID) FROM PUBLIC;
+REVOKE ALL ON FUNCTION public.create_project_layer(UUID, TEXT, TEXT, JSONB, TEXT, FLOAT, INTEGER, UUID) FROM PUBLIC;
+REVOKE ALL ON FUNCTION public.set_project_layer_visibility(UUID, BOOLEAN) FROM PUBLIC;
 GRANT EXECUTE ON FUNCTION public.get_accessible_projects TO authenticated;
 GRANT EXECUTE ON FUNCTION public.list_project_assets(UUID) TO authenticated;
 GRANT EXECUTE ON FUNCTION public.list_viewer_assets(UUID) TO authenticated;
+GRANT EXECUTE ON FUNCTION public.get_project_layers(UUID) TO authenticated;
+GRANT EXECUTE ON FUNCTION public.create_project_layer(UUID, TEXT, TEXT, JSONB, TEXT, FLOAT, INTEGER, UUID) TO authenticated;
+GRANT EXECUTE ON FUNCTION public.set_project_layer_visibility(UUID, BOOLEAN) TO authenticated;
 
 ----------------------------
 -- Seed / Initial Owner
