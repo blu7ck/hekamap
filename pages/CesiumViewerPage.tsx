@@ -223,10 +223,30 @@ export const CesiumViewerPage: React.FC = () => {
           }
           // glTF/GLB Models
           else if (mime === 'model/gltf-binary' || mime === 'model/gltf+json' || asset.name?.endsWith('.gltf') || asset.name?.endsWith('.glb')) {
-            const model = await Cesium.Model.fromGltf({ url });
-            viewer.scene.primitives.add(model);
-            primitives.push(model);
-            await viewer.zoomTo(model);
+            try {
+              // Cesium 1.120: Model.fromGltf returns a Promise<Model>
+              const model = await Cesium.Model.fromGltf({ url });
+              viewer.scene.primitives.add(model);
+              primitives.push(model);
+              // Wait for model to be ready before zooming
+              await model.readyPromise;
+              await viewer.zoomTo(model);
+            } catch (modelError: any) {
+              console.error('Model load error:', modelError);
+              // Try alternative: use Entity with modelGraphics
+              try {
+                const entity = viewer.entities.add({
+                  name: asset.name,
+                  model: {
+                    uri: url,
+                  },
+                });
+                await viewer.zoomTo(entity);
+              } catch (entityError: any) {
+                console.error('Entity model load error:', entityError);
+                throw new Error(`Model yüklenemedi: ${modelError.message || entityError.message}`);
+              }
+            }
           }
           // GeoJSON
           else if (mime === 'application/geo+json' || mime === 'application/json' || asset.name?.endsWith('.geojson')) {
@@ -316,21 +336,35 @@ export const CesiumViewerPage: React.FC = () => {
 
       const signed: SignedAsset[] = [];
       for (const asset of metas) {
-        const res = await fetch('/api/signed-url', {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            Authorization: `Bearer ${token}`,
-          },
-          body: JSON.stringify({
-            project_id: pid,
-            asset_key: asset.asset_key,
-            filename: asset.name,
-          }),
-        });
-        if (!res.ok) throw new Error('Signed URL alınamadı');
-        const { signed_url } = await res.json();
-        signed.push({ ...asset, signed_url });
+        // Use proxy endpoint for CORS support (especially for KML/GeoJSON that need CORS)
+        // For large files (3D Tiles, GLB), we can still use signed URLs if CORS is configured
+        const useProxy = asset.mime_type === 'application/vnd.google-earth.kml+xml' ||
+                        asset.mime_type === 'application/vnd.google-earth.kmz' ||
+                        asset.mime_type === 'application/geo+json' ||
+                        asset.mime_type === 'application/json';
+        
+        if (useProxy) {
+          // Use proxy endpoint for CORS support
+          const proxyUrl = `/api/proxy-asset?project_id=${pid}&asset_key=${encodeURIComponent(asset.asset_key)}`;
+          signed.push({ ...asset, signed_url: proxyUrl });
+        } else {
+          // Use signed URL for other files
+          const res = await fetch('/api/signed-url', {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              Authorization: `Bearer ${token}`,
+            },
+            body: JSON.stringify({
+              project_id: pid,
+              asset_key: asset.asset_key,
+              filename: asset.name,
+            }),
+          });
+          if (!res.ok) throw new Error('Signed URL alınamadı');
+          const { signed_url } = await res.json();
+          signed.push({ ...asset, signed_url });
+        }
       }
       setAssets(signed);
     } catch (err: any) {

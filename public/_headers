@@ -1,0 +1,24 @@
+# Cesium Worker files - JavaScript MIME type
+/cesium/Workers/*
+  Content-Type: application/javascript
+
+# Cesium Widget CSS files
+/cesium/Widgets/**/*.css
+  Content-Type: text/css
+
+# Cesium Assets JSON files
+/cesium/Assets/**/*.json
+  Content-Type: application/json
+
+# Cesium WASM files
+/cesium/ThirdParty/*.wasm
+  Content-Type: application/wasm
+
+# All JavaScript files
+/*.js
+  Content-Type: application/javascript
+
+# All CSS files
+/*.css
+  Content-Type: text/css
+
