@@ -1,9 +1,10 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { useParams } from 'react-router-dom';
+import { useParams, useSearchParams } from 'react-router-dom';
 import { supabase } from '../supabaseClient';
 import { useAuth } from '../auth/AuthProvider';
 import 'cesium/Build/Cesium/Widgets/widgets.css';
 import * as Cesium from 'cesium';
+import { Lock, Loader2 } from 'lucide-react';
 
 declare const CESIUM_BASE_URL: string;
 
@@ -25,6 +26,7 @@ const setCesiumBase = () => {
 
 export const CesiumViewerPage: React.FC = () => {
   const { projectId } = useParams<{ projectId: string }>();
+  const [searchParams] = useSearchParams();
   const { profile, user } = useAuth();
   const viewerContainerRef = useRef<HTMLDivElement>(null);
   const viewerRef = useRef<Cesium.Viewer | null>(null);
@@ -33,15 +35,118 @@ export const CesiumViewerPage: React.FC = () => {
   const [assets, setAssets] = useState<SignedAsset[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
+  
+  // Viewer access PIN verification
+  const viewerToken = searchParams.get('token');
+  const [pinVerified, setPinVerified] = useState<boolean | null>(null);
+  const [pinInput, setPinInput] = useState('');
+  const [verifyingPin, setVerifyingPin] = useState(false);
+  const [viewerAccessInfo, setViewerAccessInfo] = useState<{ project_id: string; asset_id?: string; email: string } | null>(null);
 
   useEffect(() => {
     setCesiumBase();
   }, []);
 
+  // Check if viewer access is required
   useEffect(() => {
     if (!projectId) return;
-    void loadAndSignAssets(projectId);
-  }, [projectId]);
+    
+    if (!viewerToken) {
+      // No token, check if user is authenticated and owns the project
+      if (user && profile) {
+        void checkProjectAccess(projectId);
+      } else {
+        setPinVerified(false);
+      }
+    } else {
+      // Token provided, PIN verification required
+      setPinVerified(null);
+    }
+  }, [viewerToken, user, profile, projectId]);
+
+  const checkProjectAccess = async (pid: string) => {
+    if (!user || !profile) {
+      setPinVerified(false);
+      return;
+    }
+    
+    try {
+      const { data, error } = await supabase
+        .from('projects')
+        .select('id, owner_id')
+        .eq('id', pid)
+        .single();
+      
+      if (error || !data) {
+        setPinVerified(false);
+        return;
+      }
+      
+      // If user owns the project, allow access
+      if (data.owner_id === profile.id) {
+        setPinVerified(true);
+        void loadAndSignAssets(pid);
+      } else {
+        setPinVerified(false);
+      }
+    } catch (err) {
+      console.error('Project access check error:', err);
+      setPinVerified(false);
+    }
+  };
+
+  const verifyPin = async () => {
+    if (!viewerToken || !pinInput.trim() || !/^\d{4}$/.test(pinInput)) {
+      setError('Lütfen 4 haneli bir PIN girin');
+      return;
+    }
+
+    setVerifyingPin(true);
+    setError(null);
+
+    try {
+      const res = await fetch('/api/verify-viewer-pin', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          access_token: viewerToken,
+          pin: pinInput.trim(),
+        }),
+      });
+
+      if (!res.ok) {
+        const errorData = await res.json().catch(() => ({ error: 'PIN doğrulanamadı' }));
+        throw new Error(errorData.error || 'PIN doğrulanamadı');
+      }
+
+      const data = await res.json();
+      if (data.valid) {
+        setPinVerified(true);
+        setViewerAccessInfo({
+          project_id: data.project_id,
+          asset_id: data.asset_id,
+          email: data.email,
+        });
+        void loadAndSignAssets(data.project_id, data.asset_id);
+      } else {
+        setError('Geçersiz PIN');
+      }
+    } catch (err: any) {
+      setError(err.message || 'PIN doğrulanamadı');
+    } finally {
+      setVerifyingPin(false);
+    }
+  };
+
+  useEffect(() => {
+    if (!projectId || pinVerified !== true) return;
+    // If no viewer token, load assets normally
+    if (!viewerToken) {
+      void loadAndSignAssets(projectId);
+    }
+  }, [projectId, pinVerified, viewerToken]);
 
   useEffect(() => {
     if (!viewerContainerRef.current || viewerRef.current) return;
@@ -159,14 +264,32 @@ export const CesiumViewerPage: React.FC = () => {
     };
   }, [assets]);
 
-  const loadAndSignAssets = async (pid: string) => {
+  const loadAndSignAssets = async (pid: string, assetId?: string) => {
     setError(null);
     setLoading(true);
     try {
       // 1) Metadata from Supabase (no signed URLs)
-      const { data, error } = await supabase.rpc('list_viewer_assets', { project_id: pid });
-      if (error) throw new Error(error.message);
-      const metas: AssetMeta[] = data || [];
+      // If assetId is provided (viewer access), filter by asset
+      let metas: AssetMeta[] = [];
+      
+      if (assetId) {
+        // Viewer access: load specific asset
+        const { data, error } = await supabase
+          .from('project_assets')
+          .select('id, name, mime_type, asset_key, asset_type')
+          .eq('id', assetId)
+          .eq('project_id', pid)
+          .eq('processing_status', 'completed')
+          .single();
+        
+        if (error) throw new Error(error.message);
+        if (data) metas = [data];
+      } else {
+        // Owner access: load all assets
+        const { data, error } = await supabase.rpc('list_viewer_assets', { project_id: pid });
+        if (error) throw new Error(error.message);
+        metas = data || [];
+      }
 
       // 2) Fetch signed URL per asset via Cloudflare Function
       const session = (await supabase.auth.getSession()).data.session;
@@ -201,12 +324,97 @@ export const CesiumViewerPage: React.FC = () => {
     }
   };
 
+  // Show PIN verification form if token is provided and not verified
+  if (viewerToken && pinVerified === null) {
+    return (
+      <div className="min-h-screen bg-black text-white flex items-center justify-center">
+        <div className="max-w-md w-full mx-4">
+          <div className="rounded-lg border border-gray-800 bg-gray-900/50 p-8">
+            <div className="flex items-center gap-3 mb-6">
+              <Lock className="w-8 h-8 text-blue-400" />
+              <h2 className="text-2xl font-semibold">Viewer Erişimi</h2>
+            </div>
+            <p className="text-gray-300 mb-6">
+              Bu içeriğe erişmek için PIN gereklidir. E-posta adresinize gönderilen PIN'i girin.
+            </p>
+            {error && (
+              <div className="mb-4 p-3 rounded-lg bg-red-500/10 border border-red-500/20 text-red-400 text-sm">
+                {error}
+              </div>
+            )}
+            <div className="space-y-4">
+              <div>
+                <label htmlFor="pin" className="block text-sm font-medium text-gray-300 mb-2">
+                  PIN (4 haneli)
+                </label>
+                <input
+                  id="pin"
+                  type="text"
+                  inputMode="numeric"
+                  maxLength={4}
+                  value={pinInput}
+                  onChange={(e) => {
+                    const val = e.target.value.replace(/\D/g, '');
+                    setPinInput(val);
+                    setError(null);
+                  }}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter' && pinInput.length === 4) {
+                      void verifyPin();
+                    }
+                  }}
+                  className="w-full px-4 py-3 rounded-lg bg-gray-800 border border-gray-700 text-white text-center text-2xl tracking-widest focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  placeholder="0000"
+                  autoFocus
+                />
+              </div>
+              <button
+                onClick={verifyPin}
+                disabled={pinInput.length !== 4 || verifyingPin}
+                className="w-full py-3 rounded-lg bg-blue-600 hover:bg-blue-700 disabled:bg-gray-700 disabled:cursor-not-allowed text-white font-medium transition-colors flex items-center justify-center gap-2"
+              >
+                {verifyingPin ? (
+                  <>
+                    <Loader2 className="w-5 h-5 animate-spin" />
+                    Doğrulanıyor...
+                  </>
+                ) : (
+                  'Erişim İste'
+                )}
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  // Show error if PIN verification failed or access denied
+  if (pinVerified === false) {
+    return (
+      <div className="min-h-screen bg-black text-white flex items-center justify-center">
+        <div className="max-w-md w-full mx-4">
+          <div className="rounded-lg border border-red-500/20 bg-red-500/10 p-8 text-center">
+            <Lock className="w-12 h-12 text-red-400 mx-auto mb-4" />
+            <h2 className="text-2xl font-semibold mb-2">Erişim Reddedildi</h2>
+            <p className="text-gray-300">
+              Bu içeriğe erişim yetkiniz bulunmamaktadır.
+            </p>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="min-h-screen bg-black text-white">
       <div className="p-4 flex items-center justify-between">
         <div>
           <h1 className="text-2xl font-semibold">Viewer</h1>
-          <p className="text-sm text-gray-400">Proje: {projectId}</p>
+          <p className="text-sm text-gray-400">
+            Proje: {viewerAccessInfo?.project_id || projectId}
+            {viewerAccessInfo?.email && ` | Viewer: ${viewerAccessInfo.email}`}
+          </p>
         </div>
         {loading && <div className="text-xs text-gray-400">Yükleniyor...</div>}
       </div>

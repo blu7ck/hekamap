@@ -456,37 +456,23 @@ export const WorkspacePage: React.FC = () => {
     }
   };
 
-  // Backend API URL helper - only use if explicitly set, otherwise skip viewer management
-  const getBackendApiUrl = (): string | null => {
-    const env = import.meta.env as { VITE_BACKEND_API_URL?: string };
-    const url = env.VITE_BACKEND_API_URL;
-    // Only use if it's a valid HTTPS URL (not localhost in production)
-    if (url && (url.startsWith('https://') || url.startsWith('http://localhost'))) {
-      return url;
-    }
-    return null;
-  };
+  // Viewer access is now handled by Cloudflare Functions, no backend API needed
 
   // Load viewers for project or asset
   const loadViewers = async (projectId: string, assetId?: string) => {
-    const backendUrl = getBackendApiUrl();
-    if (!backendUrl) {
-      setError('Viewer yönetimi için backend API URL yapılandırılmamış.');
-      setLoadingViewers(false);
-      return;
-    }
-
     setLoadingViewers(true);
     try {
       const session = (await supabase.auth.getSession()).data.session;
       const token = session?.access_token;
       if (!token) throw new Error('Auth token bulunamadı.');
 
-      const url = assetId 
-        ? `${backendUrl}/api/workspace/projects/${projectId}/viewers?assetId=${assetId}`
-        : `${backendUrl}/api/workspace/projects/${projectId}/viewers`;
+      const url = new URL('/api/viewer-access', window.location.origin);
+      url.searchParams.set('project_id', projectId);
+      if (assetId) {
+        url.searchParams.set('asset_id', assetId);
+      }
 
-      const res = await fetch(url, {
+      const res = await fetch(url.toString(), {
         method: 'GET',
         headers: {
           'Authorization': `Bearer ${token}`,
@@ -495,7 +481,8 @@ export const WorkspacePage: React.FC = () => {
       });
 
       if (!res.ok) {
-        throw new Error('Viewer listesi alınamadı');
+        const errorText = await res.text();
+        throw new Error(errorText || 'Viewer listesi alınamadı');
       }
 
       const data = await res.json();
@@ -520,12 +507,6 @@ export const WorkspacePage: React.FC = () => {
       return;
     }
 
-    const backendUrl = getBackendApiUrl();
-    if (!backendUrl) {
-      setError('Viewer yönetimi için backend API URL yapılandırılmamış.');
-      return;
-    }
-
     setCreatingViewer(true);
     setError(null);
     setMessage(null);
@@ -535,22 +516,23 @@ export const WorkspacePage: React.FC = () => {
       const token = session?.access_token;
       if (!token) throw new Error('Auth token bulunamadı.');
 
-      const res = await fetch(`${backendUrl}/api/workspace/projects/${selectedProject}/viewers`, {
+      const res = await fetch('/api/viewer-access', {
         method: 'POST',
         headers: {
           'Authorization': `Bearer ${token}`,
           'Content-Type': 'application/json',
         },
         body: JSON.stringify({
+          project_id: selectedProject,
+          asset_id: selectedAssetForViewer || null,
           email: viewerEmail.trim(),
           pin: viewerPin.trim(),
-          assetId: selectedAssetForViewer || undefined,
         }),
       });
 
       if (!res.ok) {
-        const errorData = await res.json().catch(() => ({}));
-        throw new Error(errorData.error || 'Viewer erişimi oluşturulamadı');
+        const errorText = await res.text();
+        throw new Error(errorText || 'Viewer erişimi oluşturulamadı');
       }
 
       const result = await res.json();
@@ -569,18 +551,15 @@ export const WorkspacePage: React.FC = () => {
   const handleDeleteViewer = async (accessId: string) => {
     if (!confirm('Bu viewer erişimini silmek istediğinize emin misiniz?')) return;
 
-    const backendUrl = getBackendApiUrl();
-    if (!backendUrl) {
-      setError('Viewer yönetimi için backend API URL yapılandırılmamış.');
-      return;
-    }
-
     try {
       const session = (await supabase.auth.getSession()).data.session;
       const token = session?.access_token;
       if (!token) throw new Error('Auth token bulunamadı.');
 
-      const res = await fetch(`${backendUrl}/api/workspace/viewers/${accessId}`, {
+      const url = new URL('/api/viewer-access', window.location.origin);
+      url.searchParams.set('access_id', accessId);
+
+      const res = await fetch(url.toString(), {
         method: 'DELETE',
         headers: {
           'Authorization': `Bearer ${token}`,
@@ -589,7 +568,8 @@ export const WorkspacePage: React.FC = () => {
       });
 
       if (!res.ok) {
-        throw new Error('Viewer erişimi silinemedi');
+        const errorText = await res.text();
+        throw new Error(errorText || 'Viewer erişimi silinemedi');
       }
 
       setMessage('Viewer erişimi silindi');
@@ -900,19 +880,17 @@ export const WorkspacePage: React.FC = () => {
                               >
                                 <ExternalLink className="w-4 h-4" />
                               </button>
-                              {getBackendApiUrl() && (
-                                <button
-                                  onClick={() => {
-                                    setSelectedAssetForViewer(asset.id);
-                                    setShowViewerModal(true);
-                                    void loadViewers(selectedProject!, asset.id);
-                                  }}
-                                  className="p-2 rounded-lg bg-blue-500/10 hover:bg-blue-500/20 text-blue-400 transition-colors"
-                                  title="Viewer Erişimi Yönet"
-                                >
-                                  <Eye className="w-4 h-4" />
-                                </button>
-                              )}
+                              <button
+                                onClick={() => {
+                                  setSelectedAssetForViewer(asset.id);
+                                  setShowViewerModal(true);
+                                  void loadViewers(selectedProject!, asset.id);
+                                }}
+                                className="p-2 rounded-lg bg-blue-500/10 hover:bg-blue-500/20 text-blue-400 transition-colors"
+                                title="Viewer Erişimi Yönet"
+                              >
+                                <Eye className="w-4 h-4" />
+                              </button>
                             </>
                           )}
                           <button
@@ -1246,11 +1224,6 @@ export const WorkspacePage: React.FC = () => {
                 <Eye className="w-5 h-5 text-blue-500" />
                 Viewer Erişimi Yönetimi
               </h2>
-              {!getBackendApiUrl() && (
-                <div className="text-xs text-yellow-400 bg-yellow-500/10 px-3 py-1 rounded">
-                  Backend API yapılandırılmamış
-                </div>
-              )}
               <button
                 onClick={() => {
                   setShowViewerModal(false);
@@ -1267,23 +1240,8 @@ export const WorkspacePage: React.FC = () => {
             </div>
 
             <div className="space-y-6">
-              {!getBackendApiUrl() ? (
-                <div className="rounded-lg border border-yellow-500/20 bg-yellow-500/10 p-4">
-                  <div className="flex items-start gap-3">
-                    <AlertCircle className="w-5 h-5 text-yellow-400 mt-0.5" />
-                    <div className="text-sm text-yellow-300">
-                      <p className="font-medium mb-2">Viewer Yönetimi Kullanılamıyor</p>
-                      <p className="text-yellow-200/80">
-                        Viewer erişimi yönetimi için backend API URL yapılandırılmamış. 
-                        Lütfen <code className="bg-yellow-500/20 px-1 rounded">VITE_BACKEND_API_URL</code> environment variable'ını ayarlayın.
-                      </p>
-                    </div>
-                  </div>
-                </div>
-              ) : (
-                <>
-                  {/* Add Viewer Form */}
-                  <div className="rounded-lg border border-gray-800 bg-gray-800/30 p-4">
+              {/* Add Viewer Form */}
+              <div className="rounded-lg border border-gray-800 bg-gray-800/30 p-4">
                     <h3 className="text-lg font-medium mb-4 flex items-center gap-2">
                       <Plus className="w-4 h-4" />
                       Yeni Viewer Erişimi Oluştur
@@ -1397,8 +1355,6 @@ export const WorkspacePage: React.FC = () => {
                   </div>
                 )}
               </div>
-                </>
-              )}
             </div>
           </div>
         </div>
