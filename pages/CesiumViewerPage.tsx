@@ -276,7 +276,70 @@ export const CesiumViewerPage: React.FC = () => {
             const geoJson = await Cesium.GeoJsonDataSource.load(url);
             viewer.dataSources.add(geoJson);
             dataSources.push(geoJson);
-            await viewer.zoomTo(geoJson);
+            
+            // Wait for GeoJSON to fully load
+            await new Promise(resolve => setTimeout(resolve, 300));
+            
+            // Calculate bounding box from all entities
+            const entities = geoJson.entities.values;
+            const positions: Cesium.Cartographic[] = [];
+            
+            for (let i = 0; i < entities.length; i++) {
+              const entity = entities[i];
+              
+              // Get position from entity
+              if (entity.position) {
+                const position = entity.position.getValue(viewer.clock.currentTime);
+                if (position) {
+                  const cartographic = Cesium.Cartographic.fromCartesian(position);
+                  if (cartographic) {
+                    positions.push(cartographic);
+                  }
+                }
+              }
+              
+              // Get positions from polygon/polyline
+              if (entity.polygon) {
+                const hierarchy = entity.polygon.hierarchy?.getValue(viewer.clock.currentTime);
+                if (hierarchy && hierarchy.positions) {
+                  for (let j = 0; j < hierarchy.positions.length; j++) {
+                    const cartographic = Cesium.Cartographic.fromCartesian(hierarchy.positions[j]);
+                    if (cartographic) {
+                      positions.push(cartographic);
+                    }
+                  }
+                }
+              }
+              
+              if (entity.polyline) {
+                const positionsArray = entity.polyline.positions?.getValue(viewer.clock.currentTime);
+                if (positionsArray) {
+                  for (let j = 0; j < positionsArray.length; j++) {
+                    const cartographic = Cesium.Cartographic.fromCartesian(positionsArray[j]);
+                    if (cartographic) {
+                      positions.push(cartographic);
+                    }
+                  }
+                }
+              }
+            }
+            
+            // If we have positions, create a rectangle and zoom to it
+            if (positions.length > 0) {
+              try {
+                const rectangle = Cesium.Rectangle.fromCartographicArray(positions);
+                viewer.camera.flyTo({
+                  destination: rectangle,
+                });
+              } catch (zoomError) {
+                // Fallback: use default zoomTo
+                console.warn('GeoJSON zoom error, using default zoom:', zoomError);
+                await viewer.zoomTo(geoJson);
+              }
+            } else {
+              // No positions found, use default zoom
+              await viewer.zoomTo(geoJson);
+            }
           }
           // KML/KMZ
           else if (
@@ -288,7 +351,81 @@ export const CesiumViewerPage: React.FC = () => {
             const kml = await Cesium.KmlDataSource.load(url);
             viewer.dataSources.add(kml);
             dataSources.push(kml);
-            await viewer.zoomTo(kml);
+            
+            // Wait for KML to fully load
+            await new Promise(resolve => setTimeout(resolve, 500));
+            
+            // Calculate bounding box from all entities in KML
+            const entities = kml.entities.values;
+            const positions: Cesium.Cartographic[] = [];
+            
+            for (let i = 0; i < entities.length; i++) {
+              const entity = entities[i];
+              
+              // Get position from entity
+              if (entity.position) {
+                const position = entity.position.getValue(viewer.clock.currentTime);
+                if (position) {
+                  const cartographic = Cesium.Cartographic.fromCartesian(position);
+                  if (cartographic) {
+                    positions.push(cartographic);
+                  }
+                }
+              }
+              
+              // Get positions from polygon/polyline
+              if (entity.polygon) {
+                const hierarchy = entity.polygon.hierarchy?.getValue(viewer.clock.currentTime);
+                if (hierarchy && hierarchy.positions) {
+                  for (let j = 0; j < hierarchy.positions.length; j++) {
+                    const cartographic = Cesium.Cartographic.fromCartesian(hierarchy.positions[j]);
+                    if (cartographic) {
+                      positions.push(cartographic);
+                    }
+                  }
+                }
+              }
+              
+              if (entity.polyline) {
+                const positionsArray = entity.polyline.positions?.getValue(viewer.clock.currentTime);
+                if (positionsArray) {
+                  for (let j = 0; j < positionsArray.length; j++) {
+                    const cartographic = Cesium.Cartographic.fromCartesian(positionsArray[j]);
+                    if (cartographic) {
+                      positions.push(cartographic);
+                    }
+                  }
+                }
+              }
+            }
+            
+            // If we have positions, create a rectangle and zoom to it
+            if (positions.length > 0) {
+              try {
+                const rectangle = Cesium.Rectangle.fromCartographicArray(positions);
+                viewer.camera.flyTo({
+                  destination: Cesium.Rectangle.toCartesianArray(rectangle)[0],
+                  orientation: {
+                    heading: 0.0,
+                    pitch: -Cesium.Math.PI_OVER_TWO,
+                    roll: 0.0,
+                  },
+                  complete: () => {
+                    // Zoom to show the entire rectangle
+                    viewer.camera.flyTo({
+                      destination: rectangle,
+                    });
+                  },
+                });
+              } catch (zoomError) {
+                // Fallback: use default zoomTo
+                console.warn('KML zoom error, using default zoom:', zoomError);
+                await viewer.zoomTo(kml);
+              }
+            } else {
+              // No positions found, use default zoom
+              await viewer.zoomTo(kml);
+            }
           }
           // Imagery (PNG/JPEG)
           else if (mime.startsWith('image/') || asset.asset_type === 'imagery') {
