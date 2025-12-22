@@ -191,6 +191,12 @@ export const CesiumViewerPage: React.FC = () => {
   useEffect(() => {
     const viewer = viewerRef.current;
     if (!viewer || assets.length === 0) return;
+    
+    // Ensure viewer is fully initialized
+    if (!viewer.cesiumWidget || !viewer.scene) {
+      console.warn('Viewer not fully initialized yet');
+      return;
+    }
 
     const primitives: (Cesium.Cesium3DTileset | Cesium.Model | Cesium.DataSource)[] = [];
     const dataSources: Cesium.DataSource[] = [];
@@ -255,12 +261,24 @@ export const CesiumViewerPage: React.FC = () => {
     })();
 
     return () => {
-      primitives.forEach((p) => {
-        if (p instanceof Cesium.Cesium3DTileset || p instanceof Cesium.Model) {
-          viewer.scene.primitives.remove(p);
-        }
-      });
-      dataSources.forEach((ds) => viewer.dataSources.remove(ds));
+      if (viewer && viewer.scene) {
+        primitives.forEach((p) => {
+          if (p instanceof Cesium.Cesium3DTileset || p instanceof Cesium.Model) {
+            try {
+              viewer.scene.primitives.remove(p);
+            } catch (e) {
+              console.warn('Error removing primitive:', e);
+            }
+          }
+        });
+        dataSources.forEach((ds) => {
+          try {
+            viewer.dataSources.remove(ds);
+          } catch (e) {
+            console.warn('Error removing data source:', e);
+          }
+        });
+      }
     };
   }, [assets]);
 

@@ -30,11 +30,7 @@ type ReportRow = {
   created_at: string;
 };
 
-// Backend API URL - environment variable'dan al, yoksa default değer
-const getBackendApiUrl = (): string => {
-  const env = import.meta.env as { VITE_BACKEND_API_URL?: string };
-  return env.VITE_BACKEND_API_URL || 'http://localhost:3000';
-};
+// Role management is now handled by Cloudflare Functions, no backend API needed
 
 export const AdminDashboard: React.FC = () => {
   const { signOut, session } = useAuth();
@@ -74,8 +70,7 @@ export const AdminDashboard: React.FC = () => {
         return;
       }
 
-      const backendUrl = getBackendApiUrl();
-      const res = await fetch(`${backendUrl}/api/admin/users?page=1&limit=100`, {
+      const res = await fetch('/api/admin/users?page=1&limit=100', {
         method: 'GET',
         headers: {
           'Authorization': `Bearer ${token}`,
@@ -84,8 +79,8 @@ export const AdminDashboard: React.FC = () => {
       });
 
       if (!res.ok) {
-        const errorData = await res.json().catch(() => ({}));
-        throw new Error(errorData.error || 'Kullanıcılar yüklenemedi');
+        const errorText = await res.text();
+        throw new Error(errorText || 'Kullanıcılar yüklenemedi');
       }
 
       const data = await res.json();
@@ -186,8 +181,7 @@ export const AdminDashboard: React.FC = () => {
         return;
       }
 
-      const backendUrl = getBackendApiUrl();
-      const res = await fetch(`${backendUrl}/api/admin/users/${userId}/role`, {
+      const res = await fetch(`/api/admin/users/${userId}/role`, {
         method: 'POST',
         headers: {
           'Authorization': `Bearer ${token}`,
@@ -200,8 +194,8 @@ export const AdminDashboard: React.FC = () => {
       });
 
       if (!res.ok) {
-        const errorData = await res.json().catch(() => ({}));
-        throw new Error(errorData.error || 'Rol güncellenemedi');
+        const errorText = await res.text();
+        throw new Error(errorText || 'Rol güncellenemedi');
       }
 
       const result = await res.json();

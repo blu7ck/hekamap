@@ -62,10 +62,15 @@ export const onRequest: PagesFunction<Env> = async (context) => {
     Bucket: context.env.R2_PRIVATE_BUCKET,
     Key: asset_key,
     ResponseContentDisposition: `${disposition}; filename="${filename || asset_key.split('/').pop() || 'asset'}"`,
+    // Add CORS headers to signed URL
+    ResponseCacheControl: 'public, max-age=3600',
   });
 
   const ttl = Number(context.env.R2_SIGNED_URL_TTL_SECONDS || 900);
   const signed_url = await getSignedUrl(s3, command, { expiresIn: ttl });
+  
+  // Note: CORS headers must be configured on the R2 bucket itself
+  // The signed URL will work, but CORS must be set via R2 dashboard or r2-cors API
 
   return new Response(JSON.stringify({ signed_url }), {
     headers: { 'Content-Type': 'application/json' },

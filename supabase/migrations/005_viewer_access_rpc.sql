@@ -176,13 +176,13 @@ BEGIN
   -- Return viewer access list
   RETURN QUERY
   SELECT
-    pa.id,
-    pa.email,
-    pa.asset_id,
-    pa.created_at,
-    pa.last_accessed_at,
-    pa.access_count,
-    pa.expires_at
+    pa.id AS id,
+    pa.email AS email,
+    pa.asset_id AS asset_id,
+    pa.created_at AS created_at,
+    pa.last_accessed_at AS last_accessed_at,
+    pa.access_count AS access_count,
+    pa.expires_at AS expires_at
   FROM public.project_access pa
   WHERE pa.project_id = p_project_id
     AND (p_asset_id IS NULL AND pa.asset_id IS NULL OR pa.asset_id = p_asset_id)

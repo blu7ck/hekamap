@@ -48,7 +48,7 @@ export const onRequest: PagesFunction<Env> = async (context) => {
     p_asset_id: asset_id || null,
   });
 
-  if (accessError || !access || access.length === 0) {
+  if (accessError) {
     console.error('create_viewer_access error:', accessError);
     if (accessError?.message?.includes('Only owner or admin')) {
       return new Response('Forbidden: Only owner or admin can create viewer access', { status: 403 }) as unknown as CfResponse;
@@ -56,7 +56,15 @@ export const onRequest: PagesFunction<Env> = async (context) => {
     if (accessError?.message?.includes('permission')) {
       return new Response('Forbidden: No permission', { status: 403 }) as unknown as CfResponse;
     }
-    return new Response(`Failed to create viewer access: ${accessError?.message || 'Unknown error'}`, { status: 500 }) as unknown as CfResponse;
+    if (accessError?.message?.includes('PIN must be')) {
+      return new Response(accessError.message, { status: 400 }) as unknown as CfResponse;
+    }
+    return new Response(`Failed to create viewer access: ${accessError.message || 'Unknown error'}`, { status: 500 }) as unknown as CfResponse;
+  }
+
+  if (!access || !Array.isArray(access) || access.length === 0) {
+    console.error('create_viewer_access returned empty result');
+    return new Response('Failed to create viewer access: Empty result', { status: 500 }) as unknown as CfResponse;
   }
 
   const accessData = access[0];
