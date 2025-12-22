@@ -286,7 +286,7 @@ export const CesiumViewerPage: React.FC = () => {
         if (data) metas = [data];
       } else {
         // Owner access: load all assets
-        const { data, error } = await supabase.rpc('list_viewer_assets', { project_id: pid });
+        const { data, error } = await supabase.rpc('list_viewer_assets', { p_project_id: pid });
         if (error) throw new Error(error.message);
         metas = data || [];
       }
