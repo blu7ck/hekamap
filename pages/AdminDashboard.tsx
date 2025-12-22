@@ -2,16 +2,21 @@ import React, { useEffect, useState } from 'react';
 import { supabase } from '../supabaseClient';
 import { useAuth } from '../auth/AuthProvider';
 
+type UserRole = 'owner' | 'admin' | 'moderator' | 'user' | 'viewer';
+
 type UserRow = {
   id: string;
   email?: string;
-  role?: string;
+  role?: UserRole;
+  username?: string;
+  full_name?: string;
 };
 
 type Stats = {
   totalUsers: number;
   owners: number;
   admins: number;
+  moderators: number;
   projects: number;
   topics: number;
   pendingReports: number;
@@ -25,8 +30,14 @@ type ReportRow = {
   created_at: string;
 };
 
+// Backend API URL - environment variable'dan al, yoksa default değer
+const getBackendApiUrl = (): string => {
+  const env = import.meta.env as { VITE_BACKEND_API_URL?: string };
+  return env.VITE_BACKEND_API_URL || 'http://localhost:3000';
+};
+
 export const AdminDashboard: React.FC = () => {
-  const { signOut } = useAuth();
+  const { signOut, session } = useAuth();
   const [users, setUsers] = useState<UserRow[]>([]);
   const [stats, setStats] = useState<Stats | null>(null);
   const [reports, setReports] = useState<ReportRow[]>([]);
@@ -38,24 +49,61 @@ export const AdminDashboard: React.FC = () => {
   const [newAdminEmail, setNewAdminEmail] = useState('');
   const [generatedPassword, setGeneratedPassword] = useState<string | null>(null);
   const [creatingAdmin, setCreatingAdmin] = useState(false);
+  const [changingRole, setChangingRole] = useState<string | null>(null);
 
   useEffect(() => {
     void Promise.all([loadUsers(), loadStats(), loadReports()]);
   }, []);
 
+  const getAuthToken = async (): Promise<string | null> => {
+    if (session?.access_token) {
+      return session.access_token;
+    }
+    const { data } = await supabase.auth.getSession();
+    return data.session?.access_token || null;
+  };
+
   const loadUsers = async () => {
     setLoadingUsers(true);
     setError(null);
-    const { data, error } = await supabase
-      .from('user_profiles')
-      .select('id, role, email')
-      .order('email', { ascending: true });
-    setLoadingUsers(false);
-    if (error) {
-      setError('Kullanıcılar alınamadı.');
-      return;
+    try {
+      const token = await getAuthToken();
+      if (!token) {
+        setError('Oturum bulunamadı.');
+        setLoadingUsers(false);
+        return;
+      }
+
+      const backendUrl = getBackendApiUrl();
+      const res = await fetch(`${backendUrl}/api/admin/users?page=1&limit=100`, {
+        method: 'GET',
+        headers: {
+          'Authorization': `Bearer ${token}`,
+          'Content-Type': 'application/json',
+        },
+      });
+
+      if (!res.ok) {
+        const errorData = await res.json().catch(() => ({}));
+        throw new Error(errorData.error || 'Kullanıcılar yüklenemedi');
+      }
+
+      const data = await res.json();
+      setUsers(data.users || []);
+    } catch (err: any) {
+      console.error('Load users error:', err);
+      setError(err.message || 'Kullanıcılar yüklenemedi.');
+      // Fallback: Supabase'den direkt yükle (eski yöntem)
+      const { data, error: supabaseError } = await supabase
+        .from('user_profiles')
+        .select('id, role, email, username, full_name')
+        .order('email', { ascending: true });
+      if (!supabaseError && data) {
+        setUsers(data);
+      }
+    } finally {
+      setLoadingUsers(false);
     }
-    setUsers(data || []);
   };
 
   const loadStats = async () => {
@@ -65,6 +113,7 @@ export const AdminDashboard: React.FC = () => {
         usersCount,
         ownersCount,
         adminsCount,
+        moderatorsCount,
         projectsCount,
         topicsCount,
         pendingReportsCount,
@@ -78,6 +127,10 @@ export const AdminDashboard: React.FC = () => {
           .from('user_profiles')
           .select('*', { count: 'exact', head: true })
           .eq('role', 'admin'),
+        supabase
+          .from('user_profiles')
+          .select('*', { count: 'exact', head: true })
+          .eq('role', 'moderator'),
         supabase.from('projects').select('*', { count: 'exact', head: true }),
         supabase.from('topics').select('*', { count: 'exact', head: true }),
         supabase
@@ -90,6 +143,7 @@ export const AdminDashboard: React.FC = () => {
         totalUsers: usersCount.count ?? 0,
         owners: ownersCount.count ?? 0,
         admins: adminsCount.count ?? 0,
+        moderators: moderatorsCount.count ?? 0,
         projects: projectsCount.count ?? 0,
         topics: topicsCount.count ?? 0,
         pendingReports: pendingReportsCount.count ?? 0,
@@ -119,19 +173,46 @@ export const AdminDashboard: React.FC = () => {
     }
   };
 
-  const changeRole = async (userId: string, newRole: string) => {
+  const changeRole = async (userId: string, newRole: UserRole) => {
     setError(null);
     setMessage(null);
-    const { error } = await supabase.rpc('set_user_role', {
-      target_user: userId,
-      new_role: newRole,
-    });
-    if (error) {
-      setError('Rol güncellenemedi: ' + error.message);
-      return;
+    setChangingRole(userId);
+
+    try {
+      const token = await getAuthToken();
+      if (!token) {
+        setError('Oturum bulunamadı.');
+        setChangingRole(null);
+        return;
+      }
+
+      const backendUrl = getBackendApiUrl();
+      const res = await fetch(`${backendUrl}/api/admin/users/${userId}/role`, {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${token}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          newRole,
+          reason: `Role changed to ${newRole} via admin panel`,
+        }),
+      });
+
+      if (!res.ok) {
+        const errorData = await res.json().catch(() => ({}));
+        throw new Error(errorData.error || 'Rol güncellenemedi');
+      }
+
+      const result = await res.json();
+      setMessage(`Rol güncellendi: ${result.previousRole} → ${result.newRole}`);
+      await Promise.all([loadUsers(), loadStats()]);
+    } catch (err: any) {
+      console.error('Change role error:', err);
+      setError('Rol güncellenemedi: ' + err.message);
+    } finally {
+      setChangingRole(null);
     }
-    setMessage('Rol güncellendi');
-    await Promise.all([loadUsers(), loadStats()]);
   };
 
   const resetPassword = async (userId: string) => {
@@ -139,8 +220,7 @@ export const AdminDashboard: React.FC = () => {
 
     setError(null);
     setMessage(null);
-    const session = (await supabase.auth.getSession()).data.session;
-    const token = session?.access_token;
+    const token = await getAuthToken();
     if (!token) {
       setError('Auth token bulunamadı.');
       return;
@@ -195,8 +275,7 @@ export const AdminDashboard: React.FC = () => {
     setGeneratedPassword(null);
     setCreatingAdmin(true);
     try {
-      const session = (await supabase.auth.getSession()).data.session;
-      const token = session?.access_token;
+      const token = await getAuthToken();
       if (!token) {
         setError('Oturum bulunamadı.');
         return;
@@ -226,6 +305,23 @@ export const AdminDashboard: React.FC = () => {
     }
   };
 
+  const getRoleButtonClass = (role: UserRole) => {
+    switch (role) {
+      case 'owner':
+        return 'rounded bg-purple-600 px-2 py-1 text-xs text-white hover:bg-purple-500';
+      case 'admin':
+        return 'rounded bg-blue-500 px-2 py-1 text-xs text-black hover:bg-blue-400';
+      case 'moderator':
+        return 'rounded bg-amber-500 px-2 py-1 text-xs text-black hover:bg-amber-400';
+      case 'user':
+        return 'rounded bg-gray-700 px-2 py-1 text-xs text-white hover:bg-gray-600';
+      case 'viewer':
+        return 'rounded bg-gray-800 px-2 py-1 text-xs text-gray-300 hover:bg-gray-700';
+      default:
+        return 'rounded bg-gray-700 px-2 py-1 text-xs text-white hover:bg-gray-600';
+    }
+  };
+
   return (
     <div className="min-h-screen bg-black text-white p-6 space-y-6">
       <div className="flex items-center justify-between">
@@ -244,14 +340,14 @@ export const AdminDashboard: React.FC = () => {
       </div>
 
       {/* Dashboard & istatistikler */}
-      <div className="grid gap-4 md:grid-cols-3">
+      <div className="grid gap-4 md:grid-cols-4">
         <div className="rounded-lg border border-gray-800 bg-gray-900/60 p-4">
           <p className="text-xs uppercase tracking-widest text-gray-400">Toplam Kullanıcı</p>
           <p className="mt-2 text-3xl font-bold">
             {loadingStats && !stats ? '—' : stats?.totalUsers ?? '0'}
           </p>
           <p className="mt-1 text-xs text-gray-500">
-            Owner: {stats?.owners ?? 0} · Admin: {stats?.admins ?? 0}
+            Owner: {stats?.owners ?? 0} · Admin: {stats?.admins ?? 0} · Mod: {stats?.moderators ?? 0}
           </p>
         </div>
         <div className="rounded-lg border border-gray-800 bg-gray-900/60 p-4">
@@ -269,6 +365,13 @@ export const AdminDashboard: React.FC = () => {
             {loadingStats && !stats ? '—' : stats?.pendingReports ?? 0}
           </p>
           <p className="mt-1 text-xs text-gray-500">Bekleyen inceleme</p>
+        </div>
+        <div className="rounded-lg border border-gray-800 bg-gray-900/60 p-4">
+          <p className="text-xs uppercase tracking-widest text-gray-400">Roller</p>
+          <p className="mt-2 text-lg font-semibold text-gray-300">Yönetim</p>
+          <p className="mt-1 text-xs text-gray-500">
+            Owner · Admin · Moderator · User · Viewer
+          </p>
         </div>
       </div>
 
@@ -293,7 +396,7 @@ export const AdminDashboard: React.FC = () => {
             <div>
               <h2 className="text-lg font-semibold">Kullanıcılar</h2>
               <p className="text-xs text-gray-500">
-                Sadece owner bu ekrana erişebilir ve admin oluşturabilir.
+                Sadece owner bu ekrana erişebilir ve rol yönetimi yapabilir.
               </p>
             </div>
             <div className="flex flex-col gap-2 md:items-end">
@@ -327,7 +430,7 @@ export const AdminDashboard: React.FC = () => {
             <table className="min-w-full text-sm">
               <thead>
                 <tr className="text-gray-400">
-                  <th className="px-3 py-2 text-left">Email</th>
+                  <th className="px-3 py-2 text-left">Email / Username</th>
                   <th className="px-3 py-2 text-left">Rol</th>
                   <th className="px-3 py-2 text-left">Aksiyon</th>
                 </tr>
@@ -350,30 +453,59 @@ export const AdminDashboard: React.FC = () => {
                 {!loadingUsers &&
                   users.map((user) => (
                     <tr key={user.id} className="border-t border-gray-800">
-                      <td className="px-3 py-2">{user.email || user.id}</td>
-                      <td className="px-3 py-2 capitalize">{user.role || '—'}</td>
-                      <td className="px-3 py-2 space-x-2">
+                      <td className="px-3 py-2">
+                        <div>{user.email || user.username || user.id}</div>
+                        {user.full_name && (
+                          <div className="text-xs text-gray-500">{user.full_name}</div>
+                        )}
+                      </td>
+                      <td className="px-3 py-2">
+                        <span className="capitalize font-medium">{user.role || '—'}</span>
+                      </td>
+                      <td className="px-3 py-2 space-x-1">
                         <button
-                          className="rounded bg-emerald-500 px-2 py-1 text-xs text-black hover:bg-emerald-400"
+                          className={getRoleButtonClass('owner')}
                           onClick={() => changeRole(user.id, 'owner')}
+                          disabled={changingRole === user.id || user.role === 'owner'}
+                          title="Owner"
                         >
                           Owner
                         </button>
                         <button
-                          className="rounded bg-blue-500 px-2 py-1 text-xs text-black hover:bg-blue-400"
+                          className={getRoleButtonClass('admin')}
                           onClick={() => changeRole(user.id, 'admin')}
+                          disabled={changingRole === user.id || user.role === 'admin'}
+                          title="Admin"
                         >
                           Admin
                         </button>
                         <button
-                          className="rounded bg-gray-700 px-2 py-1 text-xs text-white hover:bg-gray-600"
+                          className={getRoleButtonClass('moderator')}
+                          onClick={() => changeRole(user.id, 'moderator')}
+                          disabled={changingRole === user.id || user.role === 'moderator'}
+                          title="Moderator"
+                        >
+                          Mod
+                        </button>
+                        <button
+                          className={getRoleButtonClass('user')}
                           onClick={() => changeRole(user.id, 'user')}
+                          disabled={changingRole === user.id || user.role === 'user'}
+                          title="User"
                         >
                           User
                         </button>
+                        <button
+                          className={getRoleButtonClass('viewer')}
+                          onClick={() => changeRole(user.id, 'viewer')}
+                          disabled={changingRole === user.id || user.role === 'viewer'}
+                          title="Viewer"
+                        >
+                          Viewer
+                        </button>
                         {(user.role === 'admin' || user.role === 'owner') && (
                           <button
-                            className="rounded bg-amber-500 px-2 py-1 text-xs text-black hover:bg-amber-400"
+                            className="rounded bg-amber-500 px-2 py-1 text-xs text-black hover:bg-amber-400 ml-1"
                             onClick={() => resetPassword(user.id)}
                             title="Şifre yenile ve e-posta gönder"
                           >
@@ -474,4 +606,3 @@ export const AdminDashboard: React.FC = () => {
     </div>
   );
 };
-

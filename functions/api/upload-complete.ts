@@ -41,7 +41,7 @@ export const onRequest: PagesFunction<Env> = async (context) => {
   const supabaseUser = getSupabaseUserClient(context.env, token);
   const { data: asset, error: assetError } = await supabaseUser
     .from('project_assets')
-    .select('id, project_id, asset_key, source_format, processing_status')
+    .select('id, project_id, asset_key, source_format, processing_status, mime_type')
     .eq('id', asset_id)
     .single();
 
@@ -59,18 +59,79 @@ export const onRequest: PagesFunction<Env> = async (context) => {
   // Use admin client for processing_jobs (system operation, not user-scoped)
   const supabaseAdmin = getSupabaseAdmin(context.env);
 
+  // Determine if file can be viewed directly without processing
+  const canViewDirectly = (sourceFormat: string | null, mimeType: string | null): boolean => {
+    if (!sourceFormat && !mimeType) return false;
+    
+    const format = sourceFormat?.toLowerCase() || '';
+    const mime = mimeType?.toLowerCase() || '';
+    
+    // Direct viewable formats
+    return (
+      format === 'glb' ||
+      format === 'geojson' ||
+      format === 'kml' ||
+      mime === 'model/gltf-binary' ||
+      mime === 'model/gltf+json' ||
+      mime === 'application/geo+json' ||
+      mime === 'application/vnd.google-earth.kml+xml' ||
+      mime === 'application/vnd.google-earth.kmz' ||
+      mime.startsWith('image/')
+    );
+  };
+
+  // Check if asset can be viewed directly
+  if (canViewDirectly(asset.source_format, asset.mime_type)) {
+    // No processing needed - mark as completed immediately
+    const { error: updateError } = await supabaseAdmin
+      .from('project_assets')
+      .update({
+        processing_status: 'completed',
+        final_key: asset.asset_key, // Use raw file as final
+        asset_type: asset.source_format === 'glb' ? 'glb' : 
+                   asset.source_format === 'geojson' ? 'geojson' :
+                   asset.source_format === 'kml' ? 'kml' :
+                   asset.mime_type?.startsWith('image/') ? 'imagery' : 'other',
+        processed_at: new Date().toISOString(),
+      })
+      .eq('id', asset_id);
+
+    if (updateError) {
+      console.error('project_assets update error', updateError);
+      return new Response('Failed to update asset status', { status: 500 }) as unknown as CfResponse;
+    }
+
+    return new Response(
+      JSON.stringify({
+        ok: true,
+        asset_id,
+        project_id,
+        status: 'completed',
+        message: 'Asset can be viewed directly, no processing needed',
+      }),
+      { headers: { 'Content-Type': 'application/json' } }
+    ) as unknown as CfResponse;
+  }
+
+  // For files that need processing, continue with job creation
   // Determine job type based on category and source format
   let jobType: JobType;
   if (asset_category === 'single_model') {
+    // Single model: OBJ/FBX/IFC/ZIP → normalize to GLB
     jobType = 'normalize';
   } else {
     // large_area
     if (asset.source_format === 'las' || asset.source_format === 'laz') {
+      // Point cloud: LAS/LAZ → 3D Tiles (point cloud)
       jobType = 'pointcloud';
     } else {
+      // Large area mesh: OBJ/FBX/ZIP → GLB → 3D Tiles
       jobType = 'tileset';
     }
   }
+  
+  // Note: ZIP files will be extracted by the backend worker
+  // ZIP contents (OBJ/FBX/etc.) will be processed according to job_type
 
   // Insert job
   const { data: job, error: jobError } = await supabaseAdmin

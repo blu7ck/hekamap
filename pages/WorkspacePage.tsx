@@ -13,7 +13,9 @@ import {
   Clock, 
   AlertCircle,
   Loader2,
-  Trash2
+  Trash2,
+  Users,
+  Eye
 } from 'lucide-react';
 
 type Project = { id: string; name: string };
@@ -47,6 +49,86 @@ const detectSourceFormat = (fileName: string, mimeType: string): string => {
   return 'other';
 };
 
+// Format info helper
+const getFormatInfo = (format: string): { name: string; description: string; requiresProcessing: boolean; category: 'direct' | 'processing' } => {
+  const formatLower = format.toLowerCase();
+  
+  // Direct viewable formats
+  if (formatLower === 'glb' || formatLower === 'gltf') {
+    return {
+      name: 'GLB/GLTF',
+      description: 'Doğrudan görüntülenebilir. Cesium tarafından desteklenen 3D model formatı.',
+      requiresProcessing: false,
+      category: 'direct'
+    };
+  }
+  if (formatLower === 'geojson') {
+    return {
+      name: 'GeoJSON',
+      description: 'Doğrudan görüntülenebilir. Vektör coğrafi veri formatı.',
+      requiresProcessing: false,
+      category: 'direct'
+    };
+  }
+  if (formatLower === 'kml' || formatLower === 'kmz') {
+    return {
+      name: 'KML/KMZ',
+      description: 'Doğrudan görüntülenebilir. Google Earth formatı.',
+      requiresProcessing: false,
+      category: 'direct'
+    };
+  }
+  
+  // Processing required formats
+  if (formatLower === 'obj') {
+    return {
+      name: 'OBJ',
+      description: 'İşleme gerektirir. GLB formatına dönüştürülecek.',
+      requiresProcessing: true,
+      category: 'processing'
+    };
+  }
+  if (formatLower === 'fbx') {
+    return {
+      name: 'FBX',
+      description: 'İşleme gerektirir. GLB formatına dönüştürülecek.',
+      requiresProcessing: true,
+      category: 'processing'
+    };
+  }
+  if (formatLower === 'ifc') {
+    return {
+      name: 'IFC',
+      description: 'İşleme gerektirir. BIM dosyası GLB formatına dönüştürülecek.',
+      requiresProcessing: true,
+      category: 'processing'
+    };
+  }
+  if (formatLower === 'las' || formatLower === 'laz') {
+    return {
+      name: 'LAS/LAZ',
+      description: 'İşleme gerektirir. LiDAR point cloud verisi 3D Tiles formatına dönüştürülecek.',
+      requiresProcessing: true,
+      category: 'processing'
+    };
+  }
+  if (formatLower === 'zip') {
+    return {
+      name: 'ZIP',
+      description: 'İşleme gerektirir. ZIP içindeki dosyalar (OBJ, FBX, vb.) extract edilip işlenecek.',
+      requiresProcessing: true,
+      category: 'processing'
+    };
+  }
+  
+  return {
+    name: format || 'Bilinmeyen',
+    description: 'Format bilgisi mevcut değil.',
+    requiresProcessing: true,
+    category: 'processing'
+  };
+};
+
 export const WorkspacePage: React.FC = () => {
   const { signOut, profile } = useAuth();
   const [projects, setProjects] = useState<Project[]>([]);
@@ -65,6 +147,13 @@ export const WorkspacePage: React.FC = () => {
   const [newProjectName, setNewProjectName] = useState('');
   const [newProjectDescription, setNewProjectDescription] = useState('');
   const [creatingProject, setCreatingProject] = useState(false);
+  const [showViewerModal, setShowViewerModal] = useState(false);
+  const [selectedAssetForViewer, setSelectedAssetForViewer] = useState<string | null>(null);
+  const [viewerEmail, setViewerEmail] = useState('');
+  const [viewerPin, setViewerPin] = useState('');
+  const [creatingViewer, setCreatingViewer] = useState(false);
+  const [viewers, setViewers] = useState<any[]>([]);
+  const [loadingViewers, setLoadingViewers] = useState(false);
 
   useEffect(() => {
     void loadProjects();
@@ -256,9 +345,17 @@ export const WorkspacePage: React.FC = () => {
       });
 
       // Notify upload complete to trigger processing
-      await notifyUploadComplete(asset_id, assetCategory);
-
-      setMessage('Dosya yüklendi ve işleme kuyruğuna eklendi.');
+      const uploadResult = await notifyUploadComplete(asset_id, assetCategory);
+      
+      const format = detectSourceFormat(selectedFile.name, selectedFile.type || '');
+      const formatInfo = getFormatInfo(format);
+      
+      if (formatInfo.category === 'direct') {
+        setMessage('Dosya yüklendi ve hazır! Doğrudan görüntülenebilir.');
+      } else {
+        setMessage('Dosya yüklendi ve işleme kuyruğuna eklendi. İşlem tamamlandığında bildirim alacaksınız.');
+      }
+      
       setShowUploadModal(false);
       setSelectedFile(null);
       setUploadProgress(0);
@@ -356,6 +453,130 @@ export const WorkspacePage: React.FC = () => {
     }
   };
 
+  // Backend API URL helper
+  const getBackendApiUrl = (): string => {
+    const env = import.meta.env as { VITE_BACKEND_API_URL?: string };
+    return env.VITE_BACKEND_API_URL || 'http://localhost:3000';
+  };
+
+  // Load viewers for project or asset
+  const loadViewers = async (projectId: string, assetId?: string) => {
+    setLoadingViewers(true);
+    try {
+      const session = (await supabase.auth.getSession()).data.session;
+      const token = session?.access_token;
+      if (!token) throw new Error('Auth token bulunamadı.');
+
+      const backendUrl = getBackendApiUrl();
+      const url = assetId 
+        ? `${backendUrl}/api/workspace/projects/${projectId}/viewers?assetId=${assetId}`
+        : `${backendUrl}/api/workspace/projects/${projectId}/viewers`;
+
+      const res = await fetch(url, {
+        method: 'GET',
+        headers: {
+          'Authorization': `Bearer ${token}`,
+          'Content-Type': 'application/json',
+        },
+      });
+
+      if (!res.ok) {
+        throw new Error('Viewer listesi alınamadı');
+      }
+
+      const data = await res.json();
+      setViewers(data.viewers || []);
+    } catch (err: any) {
+      console.error('Load viewers error:', err);
+      setError('Viewer listesi alınamadı: ' + err.message);
+    } finally {
+      setLoadingViewers(false);
+    }
+  };
+
+  // Create viewer access
+  const handleCreateViewer = async () => {
+    if (!selectedProject || !viewerEmail.trim() || !viewerPin.trim()) {
+      setError('E-posta ve PIN gerekli');
+      return;
+    }
+
+    if (!/^\d{4}$/.test(viewerPin)) {
+      setError('PIN 4 haneli olmalıdır');
+      return;
+    }
+
+    setCreatingViewer(true);
+    setError(null);
+    setMessage(null);
+
+    try {
+      const session = (await supabase.auth.getSession()).data.session;
+      const token = session?.access_token;
+      if (!token) throw new Error('Auth token bulunamadı.');
+
+      const backendUrl = getBackendApiUrl();
+      const res = await fetch(`${backendUrl}/api/workspace/projects/${selectedProject}/viewers`, {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${token}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          email: viewerEmail.trim(),
+          pin: viewerPin.trim(),
+          assetId: selectedAssetForViewer || undefined,
+        }),
+      });
+
+      if (!res.ok) {
+        const errorData = await res.json().catch(() => ({}));
+        throw new Error(errorData.error || 'Viewer erişimi oluşturulamadı');
+      }
+
+      const result = await res.json();
+      setMessage(`Viewer erişimi oluşturuldu ve e-posta gönderildi: ${result.email}`);
+      setViewerEmail('');
+      setViewerPin('');
+      await loadViewers(selectedProject, selectedAssetForViewer || undefined);
+    } catch (err: any) {
+      setError(err.message || 'Viewer erişimi oluşturulamadı');
+    } finally {
+      setCreatingViewer(false);
+    }
+  };
+
+  // Delete viewer access
+  const handleDeleteViewer = async (accessId: string) => {
+    if (!confirm('Bu viewer erişimini silmek istediğinize emin misiniz?')) return;
+
+    try {
+      const session = (await supabase.auth.getSession()).data.session;
+      const token = session?.access_token;
+      if (!token) throw new Error('Auth token bulunamadı.');
+
+      const backendUrl = getBackendApiUrl();
+      const res = await fetch(`${backendUrl}/api/workspace/viewers/${accessId}`, {
+        method: 'DELETE',
+        headers: {
+          'Authorization': `Bearer ${token}`,
+          'Content-Type': 'application/json',
+        },
+      });
+
+      if (!res.ok) {
+        throw new Error('Viewer erişimi silinemedi');
+      }
+
+      setMessage('Viewer erişimi silindi');
+      if (selectedProject) {
+        await loadViewers(selectedProject, selectedAssetForViewer || undefined);
+      }
+    } catch (err: any) {
+      setError(err.message || 'Viewer erişimi silinemedi');
+    }
+  };
+
   const getStatusText = (status?: string) => {
     switch (status) {
       case 'completed':
@@ -407,6 +628,25 @@ export const WorkspacePage: React.FC = () => {
         <div className="mb-4 p-4 rounded-lg bg-red-500/10 border border-red-500/20 text-red-400 flex items-center gap-2">
           <AlertCircle className="w-5 h-5" />
           <span>{error}</span>
+        </div>
+      )}
+      
+      {/* Info Box */}
+      {selectedProject && (
+        <div className="mb-4 p-4 rounded-lg bg-blue-500/10 border border-blue-500/20 text-blue-300">
+          <div className="flex items-start gap-3">
+            <AlertCircle className="w-5 h-5 text-blue-400 mt-0.5 flex-shrink-0" />
+            <div className="text-sm space-y-1">
+              <p className="font-medium">Dosya Yükleme Hakkında</p>
+              <ul className="list-disc list-inside space-y-1 text-blue-200/80 text-xs ml-2">
+                <li><strong>Doğrudan görüntülenebilir:</strong> GLB, GLTF, GeoJSON, KML, PNG, JPEG - Anında kullanıma hazır</li>
+                <li><strong>İşleme gerektirir:</strong> OBJ, FBX, IFC, LAS, LAZ, ZIP - Pipeline'da otomatik işlenir</li>
+                <li><strong>ZIP dosyaları:</strong> İçindeki dosyalar otomatik extract edilip işlenir</li>
+                <li><strong>Tekil Model:</strong> Küçük-orta ölçekli modeller → GLB formatına dönüştürülür</li>
+                <li><strong>Büyük Alan:</strong> Şehir/kampüs/LiDAR → 3D Tiles formatına dönüştürülür</li>
+              </ul>
+            </div>
+          </div>
         </div>
       )}
 
@@ -481,13 +721,29 @@ export const WorkspacePage: React.FC = () => {
                   Varlıklar
                 </h2>
                 <p className="text-sm text-gray-400 mt-1">
-                  {selectedProject ? `${assets.length} varlık` : 'Proje seçin'}
+                  {selectedProject ? (
+                    <>
+                      {assets.length} varlık
+                      {assets.length > 0 && (
+                        <>
+                          {' • '}
+                          {assets.filter(a => a.processing_status === 'completed').length} hazır
+                          {assets.filter(a => a.processing_status === 'queued' || a.processing_status === 'processing').length > 0 && (
+                            <> • {assets.filter(a => a.processing_status === 'queued' || a.processing_status === 'processing').length} işleniyor</>
+                          )}
+                        </>
+                      )}
+                    </>
+                  ) : (
+                    'Proje seçin'
+                  )}
                 </p>
               </div>
               <button
                 onClick={() => setShowUploadModal(true)}
                 disabled={!selectedProject || uploading}
                 className="flex items-center gap-2 px-4 py-2.5 rounded-lg bg-emerald-500 hover:bg-emerald-400 text-black font-medium transition-colors disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:bg-emerald-500"
+                title="3D modeller, coğrafi veriler ve görüntüler yükleyin"
               >
                 <Upload className="w-5 h-5" />
                 Dosya Yükle
@@ -515,46 +771,78 @@ export const WorkspacePage: React.FC = () => {
               </div>
             ) : (
               <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-                {assets.map((asset) => (
-                  <div
-                    key={asset.id}
-                    className="rounded-lg border border-gray-800 bg-gray-800/30 hover:bg-gray-800/50 p-4 transition-all group"
-                  >
-                    <div className="flex items-start justify-between mb-3">
-                      <div className="flex items-center gap-2 flex-1 min-w-0">
-                        {getStatusIcon(asset.processing_status)}
-                        <div className="flex-1 min-w-0">
-                          <div className="font-medium truncate">{asset.name || asset.id}</div>
-                          <div className="text-xs text-gray-400 mt-1">
-                            {asset.mime_type || 'Bilinmeyen format'}
+                {assets.map((asset) => {
+                  const format = detectSourceFormat(asset.name || '', asset.mime_type || '');
+                  const formatInfo = getFormatInfo(format);
+                  return (
+                    <div
+                      key={asset.id}
+                      className="rounded-lg border border-gray-800 bg-gray-800/30 hover:bg-gray-800/50 p-4 transition-all group"
+                    >
+                      <div className="flex items-start justify-between mb-3">
+                        <div className="flex items-center gap-2 flex-1 min-w-0">
+                          {getStatusIcon(asset.processing_status)}
+                          <div className="flex-1 min-w-0">
+                            <div className="font-medium truncate">{asset.name || asset.id}</div>
+                            <div className="text-xs text-gray-400 mt-1 flex items-center gap-2">
+                              <span>{asset.mime_type || 'Bilinmeyen format'}</span>
+                              {formatInfo.category === 'direct' && (
+                                <span className="px-1.5 py-0.5 rounded bg-emerald-500/20 text-emerald-400 text-[10px]">
+                                  Direkt
+                                </span>
+                              )}
+                            </div>
                           </div>
                         </div>
                       </div>
-                    </div>
-                    <div className="flex items-center justify-between">
-                      <div className="flex flex-col gap-1">
-                        <span className="text-xs px-2 py-1 rounded bg-gray-700/50 text-gray-300 inline-block w-fit">
-                          {asset.asset_category === 'single_model' ? 'Tekil Model' : 'Büyük Alan'}
-                        </span>
-                        <span className="text-xs text-gray-500 flex items-center gap-1">
-                          {getStatusIcon(asset.processing_status)}
-                          {getStatusText(asset.processing_status)}
-                        </span>
+                      <div className="flex items-center justify-between">
+                        <div className="flex flex-col gap-1">
+                          <span className="text-xs px-2 py-1 rounded bg-gray-700/50 text-gray-300 inline-block w-fit">
+                            {asset.asset_category === 'single_model' ? 'Tekil Model' : 'Büyük Alan'}
+                          </span>
+                          <span className="text-xs text-gray-500 flex items-center gap-1">
+                            {getStatusIcon(asset.processing_status)}
+                            {getStatusText(asset.processing_status)}
+                          </span>
+                          {asset.processing_status === 'queued' && (
+                            <span className="text-xs text-yellow-400">
+                              İşleme kuyruğunda bekleniyor...
+                            </span>
+                          )}
+                          {asset.processing_status === 'processing' && (
+                            <span className="text-xs text-blue-400">
+                              İşleniyor, lütfen bekleyin...
+                            </span>
+                          )}
+                        </div>
+                        <div className="flex items-center gap-2">
+                          {asset.processing_status === 'completed' && (
+                            <button
+                              onClick={() => {
+                                setSelectedAssetForViewer(asset.id);
+                                setShowViewerModal(true);
+                                void loadViewers(selectedProject!, asset.id);
+                              }}
+                              className="p-2 rounded-lg bg-blue-500/10 hover:bg-blue-500/20 text-blue-400 transition-colors"
+                              title="Viewer Erişimi"
+                            >
+                              <Eye className="w-4 h-4" />
+                            </button>
+                          )}
+                          {asset.signed_url && asset.processing_status === 'completed' && (
+                            <a
+                              href={`/viewer/${selectedProject}`}
+                              className="p-2 rounded-lg bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-400 transition-colors"
+                              title="Görüntüle"
+                            >
+                              <ExternalLink className="w-4 h-4" />
+                            </a>
+                          )}
+                        </div>
                       </div>
-                      {asset.signed_url && asset.processing_status === 'completed' && (
-                        <a
-                          href={asset.signed_url}
-                          target="_blank"
-                          rel="noreferrer"
-                          className="p-2 rounded-lg bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-400 transition-colors"
-                          title="Görüntüle"
-                        >
-                          <ExternalLink className="w-4 h-4" />
-                        </a>
-                      )}
                     </div>
-                  </div>
-                ))}
+                  );
+                })}
               </div>
             )}
           </div>
@@ -641,7 +929,7 @@ export const WorkspacePage: React.FC = () => {
       {/* Upload Modal */}
       {showUploadModal && (
         <div className="fixed inset-0 bg-black/80 backdrop-blur-sm flex items-center justify-center z-50 p-4">
-          <div className="bg-gray-900 border border-gray-800 rounded-xl p-6 max-w-md w-full shadow-2xl">
+          <div className="bg-gray-900 border border-gray-800 rounded-xl p-6 max-w-2xl w-full shadow-2xl max-h-[90vh] overflow-y-auto">
             <div className="flex items-center justify-between mb-6">
               <h2 className="text-xl font-semibold flex items-center gap-2">
                 <Upload className="w-5 h-5 text-emerald-500" />
@@ -665,8 +953,8 @@ export const WorkspacePage: React.FC = () => {
               {/* Asset Category Selection */}
               <div>
                 <label className="block text-sm font-medium mb-2">Kategori</label>
-                <div className="flex gap-4">
-                  <label className="flex items-center gap-2 cursor-pointer">
+                <div className="space-y-3">
+                  <label className="flex items-start gap-3 cursor-pointer p-3 rounded-lg border border-gray-700 hover:border-emerald-500/50 hover:bg-gray-800/50 transition-all">
                     <input
                       type="radio"
                       name="category"
@@ -674,11 +962,16 @@ export const WorkspacePage: React.FC = () => {
                       checked={assetCategory === 'single_model'}
                       onChange={(e) => setAssetCategory(e.target.value as 'single_model')}
                       disabled={uploading}
-                      className="w-4 h-4"
+                      className="w-4 h-4 mt-0.5"
                     />
-                    <span>Tekil Model (GLB)</span>
+                    <div className="flex-1">
+                      <div className="font-medium">Tekil Model</div>
+                      <div className="text-xs text-gray-400 mt-1">
+                        Küçük-orta ölçekli 3D modeller (bina, obje, makine). GLB formatına dönüştürülür.
+                      </div>
+                    </div>
                   </label>
-                  <label className="flex items-center gap-2 cursor-pointer">
+                  <label className="flex items-start gap-3 cursor-pointer p-3 rounded-lg border border-gray-700 hover:border-emerald-500/50 hover:bg-gray-800/50 transition-all">
                     <input
                       type="radio"
                       name="category"
@@ -686,9 +979,14 @@ export const WorkspacePage: React.FC = () => {
                       checked={assetCategory === 'large_area'}
                       onChange={(e) => setAssetCategory(e.target.value as 'large_area')}
                       disabled={uploading}
-                      className="w-4 h-4"
+                      className="w-4 h-4 mt-0.5"
                     />
-                    <span>Büyük Alan (3D Tiles)</span>
+                    <div className="flex-1">
+                      <div className="font-medium">Büyük Alan</div>
+                      <div className="text-xs text-gray-400 mt-1">
+                        Büyük ölçekli sahneler (şehir, kampüs, LiDAR). 3D Tiles formatına dönüştürülür.
+                      </div>
+                    </div>
                   </label>
                 </div>
               </div>
@@ -704,24 +1002,64 @@ export const WorkspacePage: React.FC = () => {
                     className="w-full text-sm text-gray-400 file:mr-4 file:py-2.5 file:px-4 file:rounded-lg file:border-0 file:text-sm file:font-semibold file:bg-emerald-500 file:text-black hover:file:bg-emerald-400 file:cursor-pointer disabled:opacity-50"
                   />
                 </div>
-                {selectedFile && (
-                  <div className="mt-3 p-3 rounded-lg bg-gray-800/50 border border-gray-700">
-                    <div className="flex items-center gap-2 mb-1">
-                      <File className="w-4 h-4 text-emerald-500" />
-                      <span className="text-sm font-medium truncate">{selectedFile.name}</span>
-                    </div>
-                    <div className="text-xs text-gray-400 flex items-center gap-3 mt-2">
-                      <span>{(selectedFile.size / 1024 / 1024).toFixed(2)} MB</span>
-                      <span>•</span>
-                      <span>Format: {detectSourceFormat(selectedFile.name, selectedFile.type || '')}</span>
-                    </div>
+                <div className="mt-2 text-xs text-gray-500">
+                  <p className="mb-1"><strong>Desteklenen Formatlar:</strong></p>
+                  <div className="grid grid-cols-2 gap-1 text-gray-400">
+                    <div>• GLB/GLTF (direkt)</div>
+                    <div>• GeoJSON (direkt)</div>
+                    <div>• KML/KMZ (direkt)</div>
+                    <div>• PNG/JPEG (direkt)</div>
+                    <div>• OBJ (işleme)</div>
+                    <div>• FBX (işleme)</div>
+                    <div>• IFC (işleme)</div>
+                    <div>• LAS/LAZ (işleme)</div>
+                    <div>• ZIP (işleme)</div>
                   </div>
-                )}
+                  <p className="mt-2 text-gray-500">
+                    <strong>Not:</strong> ZIP dosyaları içindeki OBJ/FBX gibi dosyalar otomatik olarak extract edilip işlenecektir.
+                  </p>
+                </div>
+                {selectedFile && (() => {
+                  const format = detectSourceFormat(selectedFile.name, selectedFile.type || '');
+                  const formatInfo = getFormatInfo(format);
+                  return (
+                    <div className="mt-3 p-4 rounded-lg bg-gray-800/50 border border-gray-700">
+                      <div className="flex items-center gap-2 mb-2">
+                        <File className="w-4 h-4 text-emerald-500" />
+                        <span className="text-sm font-medium truncate">{selectedFile.name}</span>
+                      </div>
+                      <div className="text-xs text-gray-400 flex items-center gap-3 mb-3">
+                        <span>{(selectedFile.size / 1024 / 1024).toFixed(2)} MB</span>
+                        <span>•</span>
+                        <span className={`px-2 py-0.5 rounded ${
+                          formatInfo.category === 'direct' 
+                            ? 'bg-emerald-500/20 text-emerald-400' 
+                            : 'bg-yellow-500/20 text-yellow-400'
+                        }`}>
+                          {formatInfo.name}
+                        </span>
+                      </div>
+                      <div className={`text-xs p-2 rounded ${
+                        formatInfo.category === 'direct'
+                          ? 'bg-emerald-500/10 text-emerald-300 border border-emerald-500/20'
+                          : 'bg-yellow-500/10 text-yellow-300 border border-yellow-500/20'
+                      }`}>
+                        <div className="font-medium mb-1">
+                          {formatInfo.category === 'direct' ? '✓ Doğrudan Görüntülenebilir' : '⏳ İşleme Gerektirir'}
+                        </div>
+                        <div>{formatInfo.description}</div>
+                      </div>
+                    </div>
+                  );
+                })()}
               </div>
 
               {/* Raw File Retention */}
               <div>
                 <label className="block text-sm font-medium mb-2">Ham Dosya Saklama</label>
+                <p className="text-xs text-gray-400 mb-3">
+                  İşlenmiş dosyalar kalıcı olarak saklanır. Ham (orijinal) dosyalar için saklama süresini belirleyin.
+                </p>
                 <label className="flex items-center gap-2 cursor-pointer mb-2">
                   <input
                     type="checkbox"
@@ -743,6 +1081,9 @@ export const WorkspacePage: React.FC = () => {
                       disabled={uploading}
                       className="w-full bg-gray-800 border border-gray-700 rounded px-3 py-2 text-sm"
                     />
+                    <p className="text-xs text-gray-500 mt-1">
+                      Ham dosya belirtilen süre sonra otomatik olarak silinecektir. İşlenmiş dosya kalıcıdır.
+                    </p>
                   </div>
                 )}
               </div>
@@ -797,6 +1138,151 @@ export const WorkspacePage: React.FC = () => {
                     </>
                   )}
                 </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Viewer Access Modal */}
+      {showViewerModal && selectedProject && (
+        <div className="fixed inset-0 bg-black/80 backdrop-blur-sm flex items-center justify-center z-50 p-4">
+          <div className="bg-gray-900 border border-gray-800 rounded-xl p-6 max-w-2xl w-full shadow-2xl max-h-[90vh] overflow-y-auto">
+            <div className="flex items-center justify-between mb-6">
+              <h2 className="text-xl font-semibold flex items-center gap-2">
+                <Eye className="w-5 h-5 text-blue-500" />
+                Viewer Erişimi Yönetimi
+              </h2>
+              <button
+                onClick={() => {
+                  setShowViewerModal(false);
+                  setSelectedAssetForViewer(null);
+                  setViewerEmail('');
+                  setViewerPin('');
+                  setViewers([]);
+                  setError(null);
+                }}
+                className="p-1.5 rounded-lg hover:bg-gray-800 text-gray-400 hover:text-white transition-colors"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <div className="space-y-6">
+              {/* Add Viewer Form */}
+              <div className="rounded-lg border border-gray-800 bg-gray-800/30 p-4">
+                <h3 className="text-lg font-medium mb-4 flex items-center gap-2">
+                  <Plus className="w-4 h-4" />
+                  Yeni Viewer Erişimi Oluştur
+                </h3>
+                <div className="space-y-4">
+                  <div>
+                    <label className="block text-sm font-medium mb-2">E-posta Adresi *</label>
+                    <input
+                      type="email"
+                      value={viewerEmail}
+                      onChange={(e) => setViewerEmail(e.target.value)}
+                      placeholder="viewer@example.com"
+                      disabled={creatingViewer}
+                      className="w-full bg-gray-800 border border-gray-700 rounded-lg px-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent disabled:opacity-50"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-sm font-medium mb-2">PIN (4 haneli) *</label>
+                    <input
+                      type="text"
+                      value={viewerPin}
+                      onChange={(e) => {
+                        const val = e.target.value.replace(/\D/g, '').slice(0, 4);
+                        setViewerPin(val);
+                      }}
+                      placeholder="1234"
+                      maxLength={4}
+                      disabled={creatingViewer}
+                      className="w-full bg-gray-800 border border-gray-700 rounded-lg px-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent disabled:opacity-50"
+                    />
+                    <p className="text-xs text-gray-500 mt-1">
+                      Viewer'a gönderilecek 4 haneli PIN. Örnek: {viewerEmail || 'example@mail.com'} + {viewerPin || '1234'}
+                    </p>
+                  </div>
+                  <button
+                    onClick={handleCreateViewer}
+                    disabled={!viewerEmail.trim() || !viewerPin.trim() || creatingViewer}
+                    className="w-full px-4 py-2.5 rounded-lg bg-blue-500 hover:bg-blue-400 text-white font-medium transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
+                  >
+                    {creatingViewer ? (
+                      <>
+                        <Loader2 className="w-4 h-4 animate-spin" />
+                        Oluşturuluyor...
+                      </>
+                    ) : (
+                      <>
+                        <Plus className="w-4 h-4" />
+                        Viewer Erişimi Oluştur ve E-posta Gönder
+                      </>
+                    )}
+                  </button>
+                </div>
+              </div>
+
+              {/* Viewer List */}
+              <div className="rounded-lg border border-gray-800 bg-gray-800/30 p-4">
+                <div className="flex items-center justify-between mb-4">
+                  <h3 className="text-lg font-medium flex items-center gap-2">
+                    <Users className="w-4 h-4" />
+                    Mevcut Viewer Erişimleri
+                  </h3>
+                  <button
+                    onClick={() => {
+                      if (selectedProject) {
+                        void loadViewers(selectedProject, selectedAssetForViewer || undefined);
+                      }
+                    }}
+                    className="p-2 rounded-lg bg-gray-700 hover:bg-gray-600 transition-colors"
+                    disabled={loadingViewers}
+                  >
+                    <RefreshCw className={`w-4 h-4 ${loadingViewers ? 'animate-spin' : ''}`} />
+                  </button>
+                </div>
+
+                {loadingViewers ? (
+                  <div className="text-center py-8 text-gray-400">
+                    <Loader2 className="w-6 h-6 animate-spin mx-auto mb-2" />
+                    <p className="text-sm">Yükleniyor...</p>
+                  </div>
+                ) : viewers.length === 0 ? (
+                  <div className="text-center py-8 text-gray-500">
+                    <Users className="w-12 h-12 mx-auto mb-3 opacity-30" />
+                    <p className="text-sm">Henüz viewer erişimi yok</p>
+                  </div>
+                ) : (
+                  <div className="space-y-2">
+                    {viewers.map((viewer) => (
+                      <div
+                        key={viewer.id}
+                        className="flex items-center justify-between p-3 rounded-lg bg-gray-800/50 border border-gray-700"
+                      >
+                        <div className="flex-1 min-w-0">
+                          <div className="font-medium text-sm truncate">{viewer.email}</div>
+                          <div className="text-xs text-gray-400 mt-1">
+                            Oluşturulma: {new Date(viewer.created_at).toLocaleString('tr-TR')}
+                            {viewer.last_accessed_at && (
+                              <> • Son erişim: {new Date(viewer.last_accessed_at).toLocaleString('tr-TR')}</>
+                            )}
+                            {viewer.access_count > 0 && <> • {viewer.access_count} kez erişildi</>}
+                          </div>
+                        </div>
+                        <button
+                          onClick={() => handleDeleteViewer(viewer.id)}
+                          className="p-2 rounded-lg bg-red-500/10 hover:bg-red-500/20 text-red-400 transition-colors ml-2"
+                          title="Sil"
+                        >
+                          <Trash2 className="w-4 h-4" />
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                )}
               </div>
             </div>
           </div>

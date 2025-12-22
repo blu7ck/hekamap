@@ -105,7 +105,7 @@ export const Contact: React.FC<ContactProps> = ({ onOpenModal }) => {
                   </div>
                   <div>
                     <p className="text-[9px] text-stone-500 uppercase font-bold tracking-widest">E-Posta</p>
-                    <p className="text-lg font-medium group-hover:text-emerald-400 transition-colors">info@hekamap.com</p>
+                    <p className="text-lg font-medium group-hover:text-emerald-400 transition-colors">halit@hekamap.com</p>
                   </div>
                </div>
                <div className="flex items-center gap-6 group cursor-pointer">

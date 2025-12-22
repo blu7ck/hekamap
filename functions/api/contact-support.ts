@@ -44,7 +44,7 @@ export const onRequest: PagesFunction<Env> = async (context) => {
       subject: `İletişim Formu: ${subject || 'Genel'}`,
       html: `
         <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
-          <h2 style="color: #10b981;">Yeni Destek Talebi</h2>
+          <h2 style="color: #10b981;">Yeni Proje Talebi</h2>
           <div style="background: #f3f4f6; padding: 16px; border-radius: 8px; margin: 20px 0;">
             <p style="margin: 0;"><strong>Ad:</strong> ${sanitize(firstName)}</p>
             <p style="margin: 8px 0 0 0;"><strong>Soyad:</strong> ${sanitize(lastName)}</p>
@@ -60,7 +60,7 @@ export const onRequest: PagesFunction<Env> = async (context) => {
           <p style="color: #6b7280; font-size: 12px;">Bu e-posta HekaMap web sitesinden gönderilmiştir.</p>
         </div>
       `,
-      text: `Yeni Destek Talebi\n\nAd: ${firstName || '—'}\nSoyad: ${lastName || '—'}\nE-posta: ${email}\nTelefon: ${phone || '—'}\nKonu: ${subject || 'Genel'}\n\nMesaj:\n${message}`,
+      text: `Yeni Proje Talebi\n\nAd: ${firstName || '—'}\nSoyad: ${lastName || '—'}\nE-posta: ${email}\nTelefon: ${phone || '—'}\nKonu: ${subject || 'Genel'}\n\nMesaj:\n${message}`,
     });
 
     if (!emailResult.ok) {
