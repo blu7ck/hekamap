@@ -1,4 +1,5 @@
 import React, { useEffect, useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { supabase } from '../supabaseClient';
 import { useAuth } from '../auth/AuthProvider';
 import { 
@@ -131,6 +132,7 @@ const getFormatInfo = (format: string): { name: string; description: string; req
 
 export const WorkspacePage: React.FC = () => {
   const { signOut, profile } = useAuth();
+  const navigate = useNavigate();
   const [projects, setProjects] = useState<Project[]>([]);
   const [selectedProject, setSelectedProject] = useState<string | null>(null);
   const [assets, setAssets] = useState<Asset[]>([]);
@@ -154,6 +156,7 @@ export const WorkspacePage: React.FC = () => {
   const [creatingViewer, setCreatingViewer] = useState(false);
   const [viewers, setViewers] = useState<any[]>([]);
   const [loadingViewers, setLoadingViewers] = useState(false);
+  const [deletingAsset, setDeletingAsset] = useState<string | null>(null);
 
   useEffect(() => {
     void loadProjects();
@@ -453,21 +456,32 @@ export const WorkspacePage: React.FC = () => {
     }
   };
 
-  // Backend API URL helper
-  const getBackendApiUrl = (): string => {
+  // Backend API URL helper - only use if explicitly set, otherwise skip viewer management
+  const getBackendApiUrl = (): string | null => {
     const env = import.meta.env as { VITE_BACKEND_API_URL?: string };
-    return env.VITE_BACKEND_API_URL || 'http://localhost:3000';
+    const url = env.VITE_BACKEND_API_URL;
+    // Only use if it's a valid HTTPS URL (not localhost in production)
+    if (url && (url.startsWith('https://') || url.startsWith('http://localhost'))) {
+      return url;
+    }
+    return null;
   };
 
   // Load viewers for project or asset
   const loadViewers = async (projectId: string, assetId?: string) => {
+    const backendUrl = getBackendApiUrl();
+    if (!backendUrl) {
+      setError('Viewer yönetimi için backend API URL yapılandırılmamış.');
+      setLoadingViewers(false);
+      return;
+    }
+
     setLoadingViewers(true);
     try {
       const session = (await supabase.auth.getSession()).data.session;
       const token = session?.access_token;
       if (!token) throw new Error('Auth token bulunamadı.');
 
-      const backendUrl = getBackendApiUrl();
       const url = assetId 
         ? `${backendUrl}/api/workspace/projects/${projectId}/viewers?assetId=${assetId}`
         : `${backendUrl}/api/workspace/projects/${projectId}/viewers`;
@@ -506,6 +520,12 @@ export const WorkspacePage: React.FC = () => {
       return;
     }
 
+    const backendUrl = getBackendApiUrl();
+    if (!backendUrl) {
+      setError('Viewer yönetimi için backend API URL yapılandırılmamış.');
+      return;
+    }
+
     setCreatingViewer(true);
     setError(null);
     setMessage(null);
@@ -515,7 +535,6 @@ export const WorkspacePage: React.FC = () => {
       const token = session?.access_token;
       if (!token) throw new Error('Auth token bulunamadı.');
 
-      const backendUrl = getBackendApiUrl();
       const res = await fetch(`${backendUrl}/api/workspace/projects/${selectedProject}/viewers`, {
         method: 'POST',
         headers: {
@@ -550,12 +569,17 @@ export const WorkspacePage: React.FC = () => {
   const handleDeleteViewer = async (accessId: string) => {
     if (!confirm('Bu viewer erişimini silmek istediğinize emin misiniz?')) return;
 
+    const backendUrl = getBackendApiUrl();
+    if (!backendUrl) {
+      setError('Viewer yönetimi için backend API URL yapılandırılmamış.');
+      return;
+    }
+
     try {
       const session = (await supabase.auth.getSession()).data.session;
       const token = session?.access_token;
       if (!token) throw new Error('Auth token bulunamadı.');
 
-      const backendUrl = getBackendApiUrl();
       const res = await fetch(`${backendUrl}/api/workspace/viewers/${accessId}`, {
         method: 'DELETE',
         headers: {
@@ -589,6 +613,57 @@ export const WorkspacePage: React.FC = () => {
         return 'Hata';
       default:
         return 'Bekliyor';
+    }
+  };
+
+  // Delete asset
+  const handleDeleteAsset = async (assetId: string, assetName: string) => {
+    if (!selectedProject) return;
+    
+    if (!confirm(`"${assetName}" dosyasını silmek istediğinize emin misiniz?\n\nBu işlem geri alınamaz. Dosya R2'den ve tüm veritabanı kayıtlarından silinecektir.`)) {
+      return;
+    }
+
+    setDeletingAsset(assetId);
+    setError(null);
+    setMessage(null);
+
+    try {
+      const session = (await supabase.auth.getSession()).data.session;
+      const token = session?.access_token;
+      if (!token) throw new Error('Auth token bulunamadı.');
+
+      const res = await fetch('/api/delete-asset', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({
+          project_id: selectedProject,
+          asset_id: assetId,
+        }),
+      });
+
+      if (!res.ok) {
+        const errorData = await res.json().catch(() => ({}));
+        throw new Error(errorData.error || 'Asset silinemedi');
+      }
+
+      const result = await res.json();
+      if (result.errors && result.errors.length > 0) {
+        setMessage(`Asset silindi, ancak bazı dosyalar depolamadan kaldırılamadı: ${result.errors.join(', ')}`);
+      } else {
+        setMessage('Asset ve tüm dosyalar başarıyla silindi.');
+      }
+
+      // Reload assets
+      await loadAssets(selectedProject);
+    } catch (err: any) {
+      setError(err.message || 'Asset silinemedi.');
+      console.error(err);
+    } finally {
+      setDeletingAsset(null);
     }
   };
 
@@ -817,27 +892,45 @@ export const WorkspacePage: React.FC = () => {
                         </div>
                         <div className="flex items-center gap-2">
                           {asset.processing_status === 'completed' && (
-                            <button
-                              onClick={() => {
-                                setSelectedAssetForViewer(asset.id);
-                                setShowViewerModal(true);
-                                void loadViewers(selectedProject!, asset.id);
-                              }}
-                              className="p-2 rounded-lg bg-blue-500/10 hover:bg-blue-500/20 text-blue-400 transition-colors"
-                              title="Viewer Erişimi"
-                            >
-                              <Eye className="w-4 h-4" />
-                            </button>
+                            <>
+                              <button
+                                onClick={() => navigate(`/viewer/${selectedProject}`)}
+                                className="p-2 rounded-lg bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-400 transition-colors"
+                                title="Görüntüle"
+                              >
+                                <ExternalLink className="w-4 h-4" />
+                              </button>
+                              {getBackendApiUrl() && (
+                                <button
+                                  onClick={() => {
+                                    setSelectedAssetForViewer(asset.id);
+                                    setShowViewerModal(true);
+                                    void loadViewers(selectedProject!, asset.id);
+                                  }}
+                                  className="p-2 rounded-lg bg-blue-500/10 hover:bg-blue-500/20 text-blue-400 transition-colors"
+                                  title="Viewer Erişimi Yönet"
+                                >
+                                  <Eye className="w-4 h-4" />
+                                </button>
+                              )}
+                            </>
                           )}
-                          {asset.signed_url && asset.processing_status === 'completed' && (
-                            <a
-                              href={`/viewer/${selectedProject}`}
-                              className="p-2 rounded-lg bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-400 transition-colors"
-                              title="Görüntüle"
-                            >
-                              <ExternalLink className="w-4 h-4" />
-                            </a>
-                          )}
+                          <button
+                            onClick={() => handleDeleteAsset(asset.id, asset.name || 'Dosya')}
+                            disabled={deletingAsset === asset.id || asset.processing_status === 'processing'}
+                            className="p-2 rounded-lg bg-red-500/10 hover:bg-red-500/20 text-red-400 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                            title={
+                              asset.processing_status === 'processing' 
+                                ? 'İşleme devam ederken silinemez' 
+                                : 'Sil (R2 ve veritabanından kalıcı olarak silinir)'
+                            }
+                          >
+                            {deletingAsset === asset.id ? (
+                              <Loader2 className="w-4 h-4 animate-spin" />
+                            ) : (
+                              <Trash2 className="w-4 h-4" />
+                            )}
+                          </button>
                         </div>
                       </div>
                     </div>
@@ -1153,6 +1246,11 @@ export const WorkspacePage: React.FC = () => {
                 <Eye className="w-5 h-5 text-blue-500" />
                 Viewer Erişimi Yönetimi
               </h2>
+              {!getBackendApiUrl() && (
+                <div className="text-xs text-yellow-400 bg-yellow-500/10 px-3 py-1 rounded">
+                  Backend API yapılandırılmamış
+                </div>
+              )}
               <button
                 onClick={() => {
                   setShowViewerModal(false);
@@ -1169,13 +1267,28 @@ export const WorkspacePage: React.FC = () => {
             </div>
 
             <div className="space-y-6">
-              {/* Add Viewer Form */}
-              <div className="rounded-lg border border-gray-800 bg-gray-800/30 p-4">
-                <h3 className="text-lg font-medium mb-4 flex items-center gap-2">
-                  <Plus className="w-4 h-4" />
-                  Yeni Viewer Erişimi Oluştur
-                </h3>
-                <div className="space-y-4">
+              {!getBackendApiUrl() ? (
+                <div className="rounded-lg border border-yellow-500/20 bg-yellow-500/10 p-4">
+                  <div className="flex items-start gap-3">
+                    <AlertCircle className="w-5 h-5 text-yellow-400 mt-0.5" />
+                    <div className="text-sm text-yellow-300">
+                      <p className="font-medium mb-2">Viewer Yönetimi Kullanılamıyor</p>
+                      <p className="text-yellow-200/80">
+                        Viewer erişimi yönetimi için backend API URL yapılandırılmamış. 
+                        Lütfen <code className="bg-yellow-500/20 px-1 rounded">VITE_BACKEND_API_URL</code> environment variable'ını ayarlayın.
+                      </p>
+                    </div>
+                  </div>
+                </div>
+              ) : (
+                <>
+                  {/* Add Viewer Form */}
+                  <div className="rounded-lg border border-gray-800 bg-gray-800/30 p-4">
+                    <h3 className="text-lg font-medium mb-4 flex items-center gap-2">
+                      <Plus className="w-4 h-4" />
+                      Yeni Viewer Erişimi Oluştur
+                    </h3>
+                    <div className="space-y-4">
                   <div>
                     <label className="block text-sm font-medium mb-2">E-posta Adresi *</label>
                     <input
@@ -1284,6 +1397,8 @@ export const WorkspacePage: React.FC = () => {
                   </div>
                 )}
               </div>
+                </>
+              )}
             </div>
           </div>
         </div>
