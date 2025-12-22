@@ -193,8 +193,14 @@ export const CesiumViewerPage: React.FC = () => {
     if (!viewer || assets.length === 0) return;
     
     // Ensure viewer is fully initialized
-    if (!viewer.cesiumWidget || !viewer.scene) {
+    if (!viewer.cesiumWidget || !viewer.scene || !viewer.entities) {
       console.warn('Viewer not fully initialized yet');
+      return;
+    }
+    
+    // Additional check: ensure scene is ready
+    if (!viewer.scene.globe || !viewer.scene.primitives) {
+      console.warn('Scene not fully initialized yet');
       return;
     }
 
@@ -223,28 +229,45 @@ export const CesiumViewerPage: React.FC = () => {
           }
           // glTF/GLB Models
           else if (mime === 'model/gltf-binary' || mime === 'model/gltf+json' || asset.name?.endsWith('.gltf') || asset.name?.endsWith('.glb')) {
+            // Use Entity with modelGraphics - more reliable than Model.fromGltf
             try {
-              // Cesium 1.120: Model.fromGltf returns a Promise<Model>
-              const model = await Cesium.Model.fromGltf({ url });
-              viewer.scene.primitives.add(model);
-              primitives.push(model);
-              // Wait for model to be ready before zooming
-              await model.readyPromise;
-              await viewer.zoomTo(model);
-            } catch (modelError: any) {
-              console.error('Model load error:', modelError);
-              // Try alternative: use Entity with modelGraphics
+              const entity = viewer.entities.add({
+                name: asset.name,
+                model: {
+                  uri: url,
+                  minimumPixelSize: 128,
+                  maximumScale: 20000,
+                },
+              });
+              
+              // Wait for model to load - Entity.modelGraphics doesn't have readyPromise
+              // Instead, wait a bit and then zoom (Cesium will load model asynchronously)
+              await new Promise(resolve => setTimeout(resolve, 100));
+              
+              // Try to zoom - if model isn't ready, Cesium will handle it
               try {
-                const entity = viewer.entities.add({
-                  name: asset.name,
-                  model: {
-                    uri: url,
-                  },
-                });
                 await viewer.zoomTo(entity);
-              } catch (entityError: any) {
-                console.error('Entity model load error:', entityError);
-                throw new Error(`Model yüklenemedi: ${modelError.message || entityError.message}`);
+              } catch (zoomError) {
+                // If zoom fails, model might still be loading - wait a bit more
+                await new Promise(resolve => setTimeout(resolve, 500));
+                await viewer.zoomTo(entity);
+              }
+            } catch (entityError: any) {
+              console.error('Entity model load error:', entityError);
+              // Fallback: try Model.fromGltf if available
+              try {
+                if (Cesium.Model && typeof Cesium.Model.fromGltf === 'function') {
+                  const model = await Cesium.Model.fromGltf({ url });
+                  viewer.scene.primitives.add(model);
+                  primitives.push(model);
+                  await model.readyPromise;
+                  await viewer.zoomTo(model);
+                } else {
+                  throw new Error('Model.fromGltf is not available');
+                }
+              } catch (modelError: any) {
+                console.error('Model.fromGltf error:', modelError);
+                throw new Error(`Model yüklenemedi: ${entityError.message || modelError.message}`);
               }
             }
           }
@@ -345,7 +368,8 @@ export const CesiumViewerPage: React.FC = () => {
         
         if (useProxy) {
           // Use proxy endpoint for CORS support
-          const proxyUrl = `/api/proxy-asset?project_id=${pid}&asset_key=${encodeURIComponent(asset.asset_key)}`;
+          // Add token as query param since Cesium's fetch doesn't send Authorization header
+          const proxyUrl = `/api/proxy-asset?project_id=${pid}&asset_key=${encodeURIComponent(asset.asset_key)}&token=${encodeURIComponent(token || '')}`;
           signed.push({ ...asset, signed_url: proxyUrl });
         } else {
           // Use signed URL for other files

@@ -20,7 +20,12 @@ export const onRequest: PagesFunction<Env> = async (context) => {
     return new Response('Method Not Allowed', { status: 405 }) as unknown as CfResponse;
   }
 
-  const token = getBearerToken(context.request);
+  // Get token from Authorization header or query param (for Cesium fetch requests)
+  let token = getBearerToken(context.request);
+  if (!token) {
+    const url = new URL(context.request.url);
+    token = url.searchParams.get('token') || null;
+  }
   if (!token) return new Response('Unauthorized', { status: 401 }) as unknown as CfResponse;
 
   const verified = await verifySupabaseToken(token, context.env);
