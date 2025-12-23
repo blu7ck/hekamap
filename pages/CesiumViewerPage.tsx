@@ -754,7 +754,15 @@ export const CesiumViewerPage: React.FC = () => {
             viewer.scene.primitives.add(tileset);
             layerHandlesRef.current[asset.id] = { type: 'tileset', handle: tileset };
             nextLayers.push({ id: asset.id, name: asset.name, type: 'tileset', visible: true, opacity: 1 });
-            await viewer.zoomTo(tileset);
+            if (!viewer.isDestroyed() && viewer.camera) {
+              try {
+                await viewer.zoomTo(tileset);
+              } catch (zoomError: any) {
+                if (!zoomError?.message?.includes('destroyed')) {
+                  console.warn('Tileset zoomTo failed:', zoomError);
+                }
+              }
+            }
           }
           // glTF/GLB Models
           else if (
@@ -786,18 +794,31 @@ export const CesiumViewerPage: React.FC = () => {
               attempts++;
             }
 
+            if (!ready()) break;
             try {
-              await viewer.zoomTo(entity);
-            } catch (zoomError) {
+              if (!viewer.isDestroyed() && viewer.camera) {
+                await viewer.zoomTo(entity);
+              }
+            } catch (zoomError: any) {
+              if (zoomError?.message?.includes('destroyed')) {
+                // Viewer was destroyed, skip zoom
+                break;
+              }
               console.warn('Zoom to entity failed, using default view:', zoomError);
-              viewer.camera.flyTo({
-                destination: Cesium.Cartesian3.fromDegrees(0, 0, 1000),
-                orientation: {
-                  heading: 0.0,
-                  pitch: -Cesium.Math.PI_OVER_TWO,
-                  roll: 0.0,
-                },
-              });
+              if (!viewer.isDestroyed() && viewer.camera) {
+                try {
+                  viewer.camera.flyTo({
+                    destination: Cesium.Cartesian3.fromDegrees(0, 0, 1000),
+                    orientation: {
+                      heading: 0.0,
+                      pitch: -Cesium.Math.PI_OVER_TWO,
+                      roll: 0.0,
+                    },
+                  });
+                } catch (e) {
+                  // Ignore camera errors if viewer is destroyed
+                }
+              }
             }
 
             layerHandlesRef.current[asset.id] = { type: 'model', handle: entity };
@@ -812,15 +833,24 @@ export const CesiumViewerPage: React.FC = () => {
             nextLayers.push({ id: asset.id, name: asset.name, type: 'geojson', visible: true, opacity: 1 });
 
             await new Promise((resolve) => setTimeout(resolve, 300));
+            if (!ready()) break;
             try {
-              await viewer.zoomTo(geoJson);
-            } catch (zoomError) {
+              if (!viewer.isDestroyed() && viewer.camera) {
+                await viewer.zoomTo(geoJson);
+              }
+            } catch (zoomError: any) {
+              if (zoomError?.message?.includes('destroyed')) {
+                // Viewer was destroyed, skip zoom
+                break;
+              }
               console.warn('GeoJSON zoomTo failed, trying manual calculation:', zoomError);
+              if (!ready()) break;
               try {
                 const entities = geoJson.entities.values;
                 const positions: Cesium.Cartographic[] = [];
 
                 for (let i = 0; i < entities.length; i++) {
+                  if (!ready()) break;
                   const entity = entities[i];
 
                   if (entity.position) {
@@ -849,9 +879,13 @@ export const CesiumViewerPage: React.FC = () => {
                   }
                 }
 
-                if (positions.length > 0) {
+                if (positions.length > 0 && !viewer.isDestroyed() && viewer.camera) {
                   const rectangle = Cesium.Rectangle.fromCartographicArray(positions);
-                  viewer.camera.flyTo({ destination: rectangle });
+                  try {
+                    viewer.camera.flyTo({ destination: rectangle });
+                  } catch (e) {
+                    // Ignore camera errors if viewer is destroyed
+                  }
                 }
               } catch (manualZoomError) {
                 console.error('Manual GeoJSON zoom failed:', manualZoomError);
@@ -872,11 +906,24 @@ export const CesiumViewerPage: React.FC = () => {
             nextLayers.push({ id: asset.id, name: asset.name, type: 'kml', visible: true, opacity: 1 });
 
             await new Promise((resolve) => setTimeout(resolve, 1000));
+            if (!ready()) break;
             try {
-              await viewer.zoomTo(kml);
-            } catch (zoomError) {
+              if (!viewer.isDestroyed() && viewer.camera) {
+                await viewer.zoomTo(kml);
+              }
+            } catch (zoomError: any) {
+              if (zoomError?.message?.includes('destroyed')) {
+                // Viewer was destroyed, skip zoom
+                break;
+              }
               console.warn('KML zoomTo failed, using default fallback:', zoomError);
-              viewer.camera.flyTo({ destination: Cesium.Cartesian3.fromDegrees(0, 0, 10_000_000) });
+              if (!viewer.isDestroyed() && viewer.camera) {
+                try {
+                  viewer.camera.flyTo({ destination: Cesium.Cartesian3.fromDegrees(0, 0, 10_000_000) });
+                } catch (e) {
+                  // Ignore camera errors if viewer is destroyed
+                }
+              }
             }
           }
           // Imagery (PNG/JPEG)
@@ -945,22 +992,25 @@ export const CesiumViewerPage: React.FC = () => {
         const name = asset.name?.toLowerCase() || '';
         const isGlb = name.endsWith('.glb') || name.endsWith('.gltf') || mime.includes('gltf');
         
-        // Use proxy endpoint for CORS support:
-        // - KML/GeoJSON (Cesium fetches directly)
-        // - GLB/GLTF (model-viewer and Cesium need CORS)
+        // Use proxy endpoint ONLY for text-based formats that Cesium fetches directly:
+        // - KML/GeoJSON (Cesium fetches directly and needs CORS)
+        // GLB/GLTF files should use signed URLs (R2 CORS configured) because:
+        // 1. They are binary files and proxy may corrupt them
+        // 2. Cesium can load them directly from signed URLs if CORS is configured
+        // 3. Model-viewer can also load from signed URLs
         const useProxy = asset.mime_type === 'application/vnd.google-earth.kml+xml' ||
                         asset.mime_type === 'application/vnd.google-earth.kmz' ||
                         asset.mime_type === 'application/geo+json' ||
-                        asset.mime_type === 'application/json' ||
-                        isGlb;
+                        (asset.mime_type === 'application/json' && !isGlb);
         
         if (useProxy) {
-          // Use proxy endpoint for CORS support
+          // Use proxy endpoint for CORS support (text-based formats only)
           // Add token as query param since Cesium's fetch doesn't send Authorization header
           const proxyUrl = `/api/proxy-asset?project_id=${pid}&asset_key=${encodeURIComponent(asset.asset_key)}&token=${encodeURIComponent(token || '')}`;
           signed.push({ ...asset, signed_url: proxyUrl });
         } else {
-          // Use signed URL for other files
+          // Use signed URL for binary files (GLB/GLTF, images, 3D tiles, etc.)
+          // R2 bucket should have CORS configured for these to work
           const res = await fetch('/api/signed-url', {
             method: 'POST',
             headers: {
