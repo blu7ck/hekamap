@@ -14,6 +14,7 @@ type AssetMeta = {
   mime_type?: string;
   asset_key: string;
   asset_type?: 'tileset' | 'imagery' | 'other';
+  asset_category?: string | null;
 };
 
 type SignedAsset = AssetMeta & { signed_url: string };
@@ -420,9 +421,26 @@ export const CesiumViewerPage: React.FC = () => {
   const [pinInput, setPinInput] = useState('');
   const [verifyingPin, setVerifyingPin] = useState(false);
   const [viewerAccessInfo, setViewerAccessInfo] = useState<{ project_id: string; asset_id?: string; email: string } | null>(null);
+  const [modelViewerReady, setModelViewerReady] = useState(false);
 
   useEffect(() => {
     setCesiumBase();
+  }, []);
+
+  // Load model-viewer web component when needed
+  useEffect(() => {
+    const existing = document.querySelector('script[data-model-viewer]');
+    if (existing) {
+      setModelViewerReady(true);
+      return;
+    }
+    const script = document.createElement('script');
+    script.src = 'https://unpkg.com/@google/model-viewer/dist/model-viewer.min.js';
+    script.async = true;
+    script.dataset.modelViewer = 'true';
+    script.onload = () => setModelViewerReady(true);
+    script.onerror = () => console.warn('model-viewer script load failed');
+    document.head.appendChild(script);
   }, []);
 
   // Check if viewer access is required
@@ -868,7 +886,7 @@ export const CesiumViewerPage: React.FC = () => {
         // Viewer access: load specific asset
         const { data, error } = await supabase
           .from('project_assets')
-          .select('id, name, mime_type, asset_key, asset_type')
+          .select('id, name, mime_type, asset_key, asset_type, asset_category')
           .eq('id', assetId)
           .eq('project_id', pid)
           .eq('processing_status', 'completed')
@@ -1008,6 +1026,40 @@ export const CesiumViewerPage: React.FC = () => {
               Bu içeriğe erişim yetkiniz bulunmamaktadır.
             </p>
           </div>
+        </div>
+      </div>
+    );
+  }
+
+  const modelViewerAsset = assets.find((a) => a.asset_category === 'model_viewer');
+  if (modelViewerAsset) {
+    return (
+      <div className="min-h-screen bg-black text-white flex flex-col">
+        <div className="p-4 border-b border-gray-800 flex items-center justify-between">
+          <div>
+            <h1 className="text-2xl font-semibold">Model Viewer</h1>
+            <p className="text-sm text-gray-400">
+              Proje: {viewerAccessInfo?.project_id || projectId} • {modelViewerAsset.name}
+            </p>
+          </div>
+          {!modelViewerReady && <div className="text-xs text-gray-400">Viewer yükleniyor...</div>}
+        </div>
+        <div className="flex-1 bg-black flex items-center justify-center p-4">
+          {/* @ts-ignore model-viewer is a web component */}
+          <model-viewer
+            style={{ width: '100%', height: '80vh', maxHeight: 'calc(100vh - 140px)' }}
+            src={modelViewerAsset.signed_url}
+            camera-controls
+            autoplay
+            exposure="1"
+            shadow-intensity="0.8"
+            ar
+            ar-modes="webxr scene-viewer quick-look"
+            auto-rotate
+            interaction-prompt="when-focused"
+            poster=""
+            loading="eager"
+          />
         </div>
       </div>
     );

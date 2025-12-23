@@ -36,6 +36,7 @@ const detectSourceFormat = (fileName: string, mimeType: string): string => {
   const lower = fileName.toLowerCase();
   const ext = lower.split('.').pop() || '';
   if (ext === 'glb') return 'glb';
+  if (ext === 'gltf') return 'gltf';
   if (ext === 'obj') return 'obj';
   if (ext === 'fbx') return 'fbx';
   if (ext === 'las') return 'las';
@@ -159,6 +160,12 @@ const detectAssetCategory = (fileName: string, mimeType: string): 'single_model'
   return 'single_model';
 };
 
+// Formats that can be either GIS (Cesium) or Model Viewer (standalone)
+const isAmbiguousModelFormat = (format: string) => {
+  const lower = format.toLowerCase();
+  return lower === 'glb' || lower === 'gltf' || lower === 'obj' || lower === 'fbx' || lower === 'ifc' || lower === 'zip';
+};
+
 export const WorkspacePage: React.FC = () => {
   const { signOut, profile } = useAuth();
   const navigate = useNavigate();
@@ -170,6 +177,7 @@ export const WorkspacePage: React.FC = () => {
   const [error, setError] = useState<string | null>(null);
   const [showUploadModal, setShowUploadModal] = useState(false);
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
+  const [viewerMode, setViewerMode] = useState<'gis' | 'model'>('gis'); // user choice for ambiguous formats
   const [keepRawForever, setKeepRawForever] = useState(true);
   const [retentionDays, setRetentionDays] = useState<number>(30);
   const [uploadProgress, setUploadProgress] = useState(0);
@@ -237,7 +245,10 @@ export const WorkspacePage: React.FC = () => {
     if (!token) throw new Error('Auth token bulunamadı.');
 
     // Auto-detect category based on file format
-    const category = detectAssetCategory(file.name, file.type || 'application/octet-stream');
+    const detectedCategory = detectAssetCategory(file.name, file.type || 'application/octet-stream');
+    const format = detectSourceFormat(file.name, file.type || '');
+    const category =
+      isAmbiguousModelFormat(format) && viewerMode === 'model' ? 'model_viewer' : detectedCategory;
 
     const res = await fetch('/api/upload-url', {
       method: 'POST',
@@ -272,7 +283,10 @@ export const WorkspacePage: React.FC = () => {
     if (!token) throw new Error('Auth token bulunamadı.');
 
     // Auto-detect category based on file format
-    const category = detectAssetCategory(fileName, mimeType);
+    const detectedCategory = detectAssetCategory(fileName, mimeType);
+    const format = detectSourceFormat(fileName, mimeType || '');
+    const category =
+      isAmbiguousModelFormat(format) && viewerMode === 'model' ? 'model_viewer' : detectedCategory;
 
     const res = await fetch('/api/upload-complete', {
       method: 'POST',
@@ -301,6 +315,8 @@ export const WorkspacePage: React.FC = () => {
       return;
     }
     setSelectedFile(file);
+    const format = detectSourceFormat(file.name, file.type || '');
+    setViewerMode(isAmbiguousModelFormat(format) ? 'gis' : 'gis');
     setError(null);
   };
 
@@ -885,7 +901,11 @@ export const WorkspacePage: React.FC = () => {
                       <div className="flex items-center justify-between">
                         <div className="flex flex-col gap-1">
                           <span className="text-xs px-2 py-1 rounded bg-gray-700/50 text-gray-300 inline-block w-fit">
-                            {asset.asset_category === 'single_model' ? 'Tekil Model' : 'Büyük Alan'}
+                            {asset.asset_category === 'large_area'
+                              ? 'Büyük Alan'
+                              : asset.asset_category === 'model_viewer'
+                                ? 'Model Viewer'
+                                : 'Tekil Model'}
                           </span>
                           <span className="text-xs text-gray-500 flex items-center gap-1">
                             {getStatusIcon(asset.processing_status)}
@@ -1130,6 +1150,39 @@ export const WorkspacePage: React.FC = () => {
                         </div>
                         <div>{formatInfo.description}</div>
                       </div>
+                      {isAmbiguousModelFormat(format) && (
+                        <div className="mt-3 space-y-2">
+                          <p className="text-xs text-gray-300 font-medium">
+                            Görüntüleme modu (GLB/OBJ/FBX/IFC/ZIP için seçim yapın):
+                          </p>
+                          <div className="flex flex-col gap-2 text-sm">
+                            <label className="flex items-center gap-2">
+                              <input
+                                type="radio"
+                                name="viewer-mode"
+                                value="gis"
+                                checked={viewerMode === 'gis'}
+                                onChange={() => setViewerMode('gis')}
+                              />
+                              <span>
+                                Harita / GIS (Cesium) — koordinatlı modeller için
+                              </span>
+                            </label>
+                            <label className="flex items-center gap-2">
+                              <input
+                                type="radio"
+                                name="viewer-mode"
+                                value="model"
+                                checked={viewerMode === 'model'}
+                                onChange={() => setViewerMode('model')}
+                              />
+                              <span>
+                                Model Viewer (3D önizleme) — koordinatsız/ürün modeli için
+                              </span>
+                            </label>
+                          </div>
+                        </div>
+                      )}
                     </div>
                   );
                 })()}
