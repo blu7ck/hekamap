@@ -195,9 +195,21 @@ export const WorkspacePage: React.FC = () => {
   const [loadingViewers, setLoadingViewers] = useState(false);
   const [deletingAsset, setDeletingAsset] = useState<string | null>(null);
 
+  // Load projects on mount and when profile changes (e.g. login/logout)
   useEffect(() => {
-    void loadProjects();
-  }, []);
+    if (profile) {
+      void loadProjects();
+    }
+  }, [profile]);
+
+  // Re-fetch when navigating back to this page
+  useEffect(() => {
+    const handleFocus = () => {
+      if (profile) void loadProjects();
+    };
+    window.addEventListener('focus', handleFocus);
+    return () => window.removeEventListener('focus', handleFocus);
+  }, [profile]);
 
   useEffect(() => {
     if (selectedProject) {

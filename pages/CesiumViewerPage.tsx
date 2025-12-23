@@ -460,6 +460,7 @@ export const CesiumViewerPage: React.FC = () => {
       
       const script = document.createElement('script');
       script.src = cdnUrls[currentIndex];
+      script.type = 'module'; // Fix: SyntaxError: export declarations may only appear at top level
       script.async = true;
       script.dataset.modelViewer = 'true';
       script.onload = () => {
