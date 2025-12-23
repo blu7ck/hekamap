@@ -24,6 +24,67 @@ const setCesiumBase = () => {
   if (Cesium.buildModuleUrl) Cesium.buildModuleUrl.setBaseUrl(base);
 };
 
+// Map imagery providers - Open source and free APIs
+const createMapProviders = () => {
+  return {
+    // OpenStreetMap - Free and open source
+    openStreetMap: new Cesium.OpenStreetMapImageryProvider({
+      url: 'https://a.tile.openstreetmap.org/',
+    }),
+    
+    // OpenStreetMap with different styles
+    openStreetMapHumanitarian: new Cesium.OpenStreetMapImageryProvider({
+      url: 'https://{s}.tile.openstreetmap.fr/hot/',
+    }),
+    
+    // CartoDB - Free tier available
+    cartoDBPositron: new Cesium.UrlTemplateImageryProvider({
+      url: 'https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png',
+      credit: '© OpenStreetMap contributors © CARTO',
+    }),
+    
+    cartoDBDarkMatter: new Cesium.UrlTemplateImageryProvider({
+      url: 'https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png',
+      credit: '© OpenStreetMap contributors © CARTO',
+    }),
+    
+    // Stamen Maps - Free
+    stamenTerrain: new Cesium.UrlTemplateImageryProvider({
+      url: 'https://stamen-tiles-{s}.a.ssl.fastly.net/terrain/{z}/{x}/{y}{r}.png',
+      credit: 'Map tiles by Stamen Design, under CC BY 3.0. Data by OpenStreetMap, under ODbL.',
+    }),
+    
+    stamenToner: new Cesium.UrlTemplateImageryProvider({
+      url: 'https://stamen-tiles-{s}.a.ssl.fastly.net/toner/{z}/{x}/{y}{r}.png',
+      credit: 'Map tiles by Stamen Design, under CC BY 3.0. Data by OpenStreetMap, under ODbL.',
+    }),
+    
+    stamenWatercolor: new Cesium.UrlTemplateImageryProvider({
+      url: 'https://stamen-tiles-{s}.a.ssl.fastly.net/watercolor/{z}/{x}/{y}.jpg',
+      credit: 'Map tiles by Stamen Design, under CC BY 3.0. Data by OpenStreetMap, under ODbL.',
+    }),
+    
+    // Esri World Imagery - Free tier
+    esriWorldImagery: new Cesium.ArcGisMapServerImageryProvider({
+      url: 'https://services.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer',
+      credit: '© Esri',
+    }),
+    
+    esriWorldStreetMap: new Cesium.ArcGisMapServerImageryProvider({
+      url: 'https://services.arcgisonline.com/ArcGIS/rest/services/World_Street_Map/MapServer',
+      credit: '© Esri',
+    }),
+    
+    esriWorldTopoMap: new Cesium.ArcGisMapServerImageryProvider({
+      url: 'https://services.arcgisonline.com/ArcGIS/rest/services/World_Topo_Map/MapServer',
+      credit: '© Esri',
+    }),
+    
+    // Note: Bing, Google, Yandex require API keys and are not fully open source
+    // They can be added if API keys are provided via environment variables
+  };
+};
+
 export const CesiumViewerPage: React.FC = () => {
   const { projectId } = useParams<{ projectId: string }>();
   const [searchParams] = useSearchParams();
@@ -31,6 +92,7 @@ export const CesiumViewerPage: React.FC = () => {
   const viewerContainerRef = useRef<HTMLDivElement>(null);
   const viewerRef = useRef<Cesium.Viewer | null>(null);
   const watermarkRef = useRef<(() => void) | null>(null);
+  const [selectedMapProvider, setSelectedMapProvider] = useState<string>('openStreetMap');
 
   const [assets, setAssets] = useState<SignedAsset[]>([]);
   const [error, setError] = useState<string | null>(null);
@@ -158,50 +220,62 @@ export const CesiumViewerPage: React.FC = () => {
       // Set terrain to Ellipsoid (no external requests)
       const terrainProvider = new Cesium.EllipsoidTerrainProvider();
       
-      // Create a simple black imagery provider (no external requests)
-      const imageryProvider = new Cesium.SingleTileImageryProvider({
-        url: 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==',
-        rectangle: Cesium.Rectangle.MAX_VALUE,
-        tileWidth: 1,
-        tileHeight: 1,
-      });
+      // Get map providers
+      const mapProviders = createMapProviders();
+      
+      // Use OpenStreetMap as default (free and open source)
+      const defaultImageryProvider = mapProviders.openStreetMap;
       
       viewer = new Cesium.Viewer(viewerContainerRef.current, {
-        requestRenderMode: true,
-        maximumRenderTimeChange: Infinity,
+        requestRenderMode: false, // Disable request render mode for better compatibility
         timeline: false,
         animation: false,
         homeButton: false,
         geocoder: false,
         fullscreenButton: false,
-        baseLayerPicker: false, // Disable base layer picker (uses Ion)
+        baseLayerPicker: false, // We'll create our own layer picker
         terrainProvider: terrainProvider,
-        imageryProvider: imageryProvider,
+        imageryProvider: defaultImageryProvider,
       });
       
       // Remove all default imagery layers (they use Ion)
       viewer.imageryLayers.removeAll();
       
-      // Add our simple black imagery
-      viewer.imageryLayers.addImageryProvider(imageryProvider);
+      // Add default OpenStreetMap layer
+      viewer.imageryLayers.addImageryProvider(defaultImageryProvider);
       
       // Ensure no Ion token is set
       if (Cesium.Ion) {
         Cesium.Ion.defaultAccessToken = '';
       }
       
+      // Store map providers for later use
+      (viewer as any)._mapProviders = mapProviders;
+      
       viewerRef.current = viewer;
 
       // Wait for viewer to be fully initialized
       const initViewer = async () => {
-        // Wait for viewer to be completely ready
-        await new Promise(resolve => setTimeout(resolve, 200));
+        // Wait for viewer to be completely ready - longer wait for stability
+        await new Promise(resolve => setTimeout(resolve, 500));
         
         if (!viewer || viewer.isDestroyed()) return;
         
         // Ensure scene is ready
         if (!viewer.scene || !viewer.cesiumWidget) {
           console.warn('Viewer scene not ready');
+          return;
+        }
+        
+        // Ensure scene components are fully initialized
+        if (!viewer.scene.globe || !viewer.scene.primitives) {
+          console.warn('Scene components not ready');
+          return;
+        }
+        
+        // Ensure entities and dataSources are ready
+        if (!viewer.entities || !viewer.dataSources) {
+          console.warn('Viewer entities/dataSources not ready');
           return;
         }
         
@@ -366,7 +440,7 @@ export const CesiumViewerPage: React.FC = () => {
           // glTF/GLB Models
           else if (mime === 'model/gltf-binary' || mime === 'model/gltf+json' || asset.name?.endsWith('.gltf') || asset.name?.endsWith('.glb')) {
             checkViewer();
-            // Use Entity with modelGraphics - this is the recommended way
+            // Use Entity with modelGraphics - this is the recommended way for CesiumJS
             const entity = viewer.entities.add({
               name: asset.name,
               position: Cesium.Cartesian3.fromDegrees(0, 0, 0), // Default position at origin
@@ -375,20 +449,44 @@ export const CesiumViewerPage: React.FC = () => {
                 minimumPixelSize: 128,
                 maximumScale: 20000,
                 scale: 1.0,
+                show: true,
               },
             });
             
-            // Wait for model to load and then zoom
-            // Entity.modelGraphics loads asynchronously, so we wait a bit
-            await new Promise(resolve => setTimeout(resolve, 500));
-            checkViewer();
+            // Wait for model to load - Entity.modelGraphics loads asynchronously
+            // We need to wait for the model to actually load before zooming
+            let modelLoaded = false;
+            let attempts = 0;
+            const maxAttempts = 20; // 10 seconds max wait
+            
+            while (!modelLoaded && attempts < maxAttempts) {
+              await new Promise(resolve => setTimeout(resolve, 500));
+              checkViewer();
+              
+              // Check if model is loaded by checking if entity has a modelGraphics
+              const entityModel = viewer.entities.getById(entity.id)?.model;
+              if (entityModel) {
+                // Check if model is ready (if it has a ready property)
+                try {
+                  if ((entityModel as any).ready === true || (entityModel as any).readyPromise) {
+                    modelLoaded = true;
+                    break;
+                  }
+                } catch (e) {
+                  // Model might be loading
+                }
+              }
+              attempts++;
+            }
             
             // Try to zoom to the entity
             try {
+              // Always try zoomTo - it might work even if model isn't fully loaded
               await viewer.zoomTo(entity);
             } catch (zoomError) {
-              // If zoom fails, try flying to a default view
+              // If zoom fails, fly to a default view
               console.warn('Zoom to entity failed, using default view:', zoomError);
+              checkViewer();
               viewer.camera.flyTo({
                 destination: Cesium.Cartesian3.fromDegrees(0, 0, 1000),
                 orientation: {
@@ -742,9 +840,48 @@ export const CesiumViewerPage: React.FC = () => {
     );
   }
 
+  // Map provider change handler
+  const handleMapProviderChange = (providerKey: string) => {
+    const viewer = viewerRef.current;
+    if (!viewer || viewer.isDestroyed()) return;
+    
+    const mapProviders = createMapProviders();
+    const provider = (mapProviders as any)[providerKey];
+    
+    if (!provider) {
+      console.error('Map provider not found:', providerKey);
+      return;
+    }
+    
+    try {
+      // Remove all existing imagery layers
+      viewer.imageryLayers.removeAll();
+      
+      // Add new provider
+      viewer.imageryLayers.addImageryProvider(provider);
+      
+      setSelectedMapProvider(providerKey);
+    } catch (err) {
+      console.error('Failed to change map provider:', err);
+    }
+  };
+
+  const mapProviderOptions = [
+    { key: 'openStreetMap', label: 'OpenStreetMap', description: 'Açık kaynak harita' },
+    { key: 'openStreetMapHumanitarian', label: 'OpenStreetMap Humanitarian', description: 'İnsani yardım haritası' },
+    { key: 'cartoDBPositron', label: 'CartoDB Positron', description: 'Açık renkli harita' },
+    { key: 'cartoDBDarkMatter', label: 'CartoDB Dark Matter', description: 'Koyu renkli harita' },
+    { key: 'stamenTerrain', label: 'Stamen Terrain', description: 'Topografik harita' },
+    { key: 'stamenToner', label: 'Stamen Toner', description: 'Siyah-beyaz harita' },
+    { key: 'stamenWatercolor', label: 'Stamen Watercolor', description: 'Sulu boya harita' },
+    { key: 'esriWorldImagery', label: 'Esri World Imagery', description: 'Uydu görüntüsü' },
+    { key: 'esriWorldStreetMap', label: 'Esri World Street Map', description: 'Sokak haritası' },
+    { key: 'esriWorldTopoMap', label: 'Esri World Topo Map', description: 'Topografik harita' },
+  ];
+
   return (
-    <div className="min-h-screen bg-black text-white">
-      <div className="p-4 flex items-center justify-between">
+    <div className="min-h-screen bg-black text-white flex flex-col">
+      <div className="p-4 flex items-center justify-between border-b border-gray-800">
         <div>
           <h1 className="text-2xl font-semibold">Viewer</h1>
           <p className="text-sm text-gray-400">
@@ -752,10 +889,25 @@ export const CesiumViewerPage: React.FC = () => {
             {viewerAccessInfo?.email && ` | Viewer: ${viewerAccessInfo.email}`}
           </p>
         </div>
-        {loading && <div className="text-xs text-gray-400">Yükleniyor...</div>}
+        <div className="flex items-center gap-4">
+          {loading && <div className="text-xs text-gray-400">Yükleniyor...</div>}
+          <div className="relative">
+            <select
+              value={selectedMapProvider}
+              onChange={(e) => handleMapProviderChange(e.target.value)}
+              className="px-3 py-2 rounded-lg bg-gray-800 border border-gray-700 text-white text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+            >
+              {mapProviderOptions.map((option) => (
+                <option key={option.key} value={option.key}>
+                  {option.label}
+                </option>
+              ))}
+            </select>
+          </div>
+        </div>
       </div>
-      {error && <div className="px-4 text-sm text-red-400">{error}</div>}
-      <div ref={viewerContainerRef} className="w-full h-[80vh]" />
+      {error && <div className="px-4 py-2 text-sm text-red-400 bg-red-500/10 border-b border-red-500/20">{error}</div>}
+      <div ref={viewerContainerRef} className="flex-1 w-full" style={{ minHeight: 'calc(100vh - 120px)' }} />
     </div>
   );
 };
