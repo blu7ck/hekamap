@@ -245,10 +245,7 @@ export const WorkspacePage: React.FC = () => {
     if (!token) throw new Error('Auth token bulunamadı.');
 
     // Auto-detect category based on file format
-    const detectedCategory = detectAssetCategory(file.name, file.type || 'application/octet-stream');
-    const format = detectSourceFormat(file.name, file.type || '');
-    const category =
-      isAmbiguousModelFormat(format) && viewerMode === 'model' ? 'model_viewer' : detectedCategory;
+    const category = detectAssetCategory(file.name, file.type || 'application/octet-stream');
 
     const res = await fetch('/api/upload-url', {
       method: 'POST',
@@ -283,10 +280,7 @@ export const WorkspacePage: React.FC = () => {
     if (!token) throw new Error('Auth token bulunamadı.');
 
     // Auto-detect category based on file format
-    const detectedCategory = detectAssetCategory(fileName, mimeType);
-    const format = detectSourceFormat(fileName, mimeType || '');
-    const category =
-      isAmbiguousModelFormat(format) && viewerMode === 'model' ? 'model_viewer' : detectedCategory;
+    const category = detectAssetCategory(fileName, mimeType);
 
     const res = await fetch('/api/upload-complete', {
       method: 'POST',
@@ -316,7 +310,7 @@ export const WorkspacePage: React.FC = () => {
     }
     setSelectedFile(file);
     const format = detectSourceFormat(file.name, file.type || '');
-    setViewerMode(isAmbiguousModelFormat(format) ? 'gis' : 'gis');
+    setViewerMode(isAmbiguousModelFormat(format) ? 'gis' : 'gis'); // default to GIS; backend only accepts single_model/large_area
     setError(null);
   };
 
@@ -1177,7 +1171,7 @@ export const WorkspacePage: React.FC = () => {
                                 onChange={() => setViewerMode('model')}
                               />
                               <span>
-                                Model Viewer (3D önizleme) — koordinatsız/ürün modeli için
+                                Model Viewer (3D önizleme) — koordinatsız/ürün modeli için (şimdilik single_model olarak kaydedilir)
                               </span>
                             </label>
                           </div>
