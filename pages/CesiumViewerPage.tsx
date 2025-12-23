@@ -42,6 +42,10 @@ const setCesiumBase = () => {
   const base = typeof CESIUM_BASE_URL !== 'undefined' ? CESIUM_BASE_URL : '/cesium';
   // @ts-expect-error buildModuleUrl exists in Cesium namespace
   if (Cesium.buildModuleUrl) Cesium.buildModuleUrl.setBaseUrl(base);
+  // Also set global for workers that read self.CESIUM_BASE_URL
+  if (typeof window !== 'undefined') {
+    (window as any).CESIUM_BASE_URL = base.endsWith('/') ? base : `${base}/`;
+  }
 };
 
 // Map imagery providers - Open source and free APIs
@@ -88,17 +92,17 @@ const createMapProviders = () => {
     esriWorldImagery: new Cesium.ArcGisMapServerImageryProvider({
       url: 'https://services.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer',
       credit: '© Esri',
-    }),
+    } as any),
     
     esriWorldStreetMap: new Cesium.ArcGisMapServerImageryProvider({
       url: 'https://services.arcgisonline.com/ArcGIS/rest/services/World_Street_Map/MapServer',
       credit: '© Esri',
-    }),
+    } as any),
     
     esriWorldTopoMap: new Cesium.ArcGisMapServerImageryProvider({
       url: 'https://services.arcgisonline.com/ArcGIS/rest/services/World_Topo_Map/MapServer',
       credit: '© Esri',
-    }),
+    } as any),
     
     // Note: Bing, Google, Yandex require API keys and are not fully open source
     // They can be added if API keys are provided via environment variables
@@ -135,7 +139,11 @@ export const CesiumViewerPage: React.FC = () => {
     const currentViewer = viewer ?? viewerRef.current;
     if (!currentViewer) return;
 
-    Object.entries(layerHandlesRef.current).forEach(([id, info]) => {
+    const entries = Object.entries(layerHandlesRef.current) as Array<
+      [string, { type: LayerType; handle: any }]
+    >;
+
+    entries.forEach(([id, info]) => {
       try {
         if (info.type === 'tileset' && currentViewer.scene?.primitives?.contains(info.handle)) {
           currentViewer.scene.primitives.remove(info.handle);
@@ -189,23 +197,33 @@ export const CesiumViewerPage: React.FC = () => {
         });
       } else if (info.type === 'model') {
         if (info.handle.model) {
-          info.handle.model.color = Cesium.Color.WHITE.withAlpha(opacity);
+          info.handle.model.color = new Cesium.ConstantProperty(
+            Cesium.Color.WHITE.withAlpha(opacity)
+          );
         }
       } else if (info.type === 'kml' || info.type === 'geojson') {
         // Best effort: apply alpha to known graphics
         const ds = info.handle as Cesium.DataSource;
         ds.entities?.values?.forEach((entity) => {
           if (entity.billboard && entity.billboard.color) {
-            entity.billboard.color = Cesium.Color.WHITE.withAlpha(opacity);
+            entity.billboard.color = new Cesium.ConstantProperty(
+              Cesium.Color.WHITE.withAlpha(opacity)
+            );
           }
           if (entity.point && entity.point.color) {
-            entity.point.color = Cesium.Color.WHITE.withAlpha(opacity);
+            entity.point.color = new Cesium.ConstantProperty(
+              Cesium.Color.WHITE.withAlpha(opacity)
+            );
           }
           if (entity.polyline && entity.polyline.material) {
-            entity.polyline.material = Cesium.Color.WHITE.withAlpha(opacity);
+            entity.polyline.material = new Cesium.ColorMaterialProperty(
+              Cesium.Color.WHITE.withAlpha(opacity)
+            );
           }
           if (entity.polygon && entity.polygon.material) {
-            entity.polygon.material = Cesium.Color.WHITE.withAlpha(opacity);
+            entity.polygon.material = new Cesium.ColorMaterialProperty(
+              Cesium.Color.WHITE.withAlpha(opacity)
+            );
           }
         });
       } else if (info.type === 'imagery') {
@@ -533,7 +551,7 @@ export const CesiumViewerPage: React.FC = () => {
         fullscreenButton: false,
         baseLayerPicker: false, // We'll create our own layer picker
         terrainProvider: terrainProvider,
-        imageryProvider: defaultImageryProvider,
+        // imageryProvider not in type defs of this build; add manually after init
       });
       
       // Remove all default imagery layers (they use Ion)
@@ -806,34 +824,8 @@ export const CesiumViewerPage: React.FC = () => {
             try {
               await viewer.zoomTo(kml);
             } catch (zoomError) {
-              console.warn('KML zoomTo failed, trying bounding sphere:', zoomError);
-              try {
-                const entities = kml.entities.values;
-                if (entities.length > 0) {
-                  const boundingSpheres: Cesium.BoundingSphere[] = [];
-                  for (let i = 0; i < entities.length; i++) {
-                    const entity = entities[i];
-                    if (entity.boundingSphere) {
-                      boundingSpheres.push(entity.boundingSphere);
-                    }
-                  }
-
-                  if (boundingSpheres.length > 0) {
-                    const boundingSphere = Cesium.BoundingSphere.fromBoundingSpheres(boundingSpheres);
-                    viewer.camera.flyTo({
-                      destination: boundingSphere,
-                      complete: () => {
-                        if (!isMounted || !ready()) return;
-                        viewer.camera.flyTo({ destination: boundingSphere });
-                      },
-                    });
-                  } else {
-                    viewer.camera.flyTo({ destination: Cesium.Cartesian3.fromDegrees(0, 0, 10_000_000) });
-                  }
-                }
-              } catch (fallbackError) {
-                console.error('KML fallback zoom failed:', fallbackError);
-              }
+              console.warn('KML zoomTo failed, using default fallback:', zoomError);
+              viewer.camera.flyTo({ destination: Cesium.Cartesian3.fromDegrees(0, 0, 10_000_000) });
             }
           }
           // Imagery (PNG/JPEG)
