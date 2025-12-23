@@ -16,7 +16,8 @@ import {
   Loader2,
   Trash2,
   Users,
-  Eye
+  Eye,
+  Edit
 } from 'lucide-react';
 
 type Project = { id: string; name: string };
@@ -131,6 +132,12 @@ const getFormatInfo = (format: string): { name: string; description: string; req
   };
 };
 
+// Check if format is ambiguous (can be used for GIS or model viewer)
+const isAmbiguousModelFormat = (format: string): boolean => {
+  const formatLower = format.toLowerCase();
+  return formatLower === 'glb' || formatLower === 'gltf' || formatLower === 'obj' || formatLower === 'fbx' || formatLower === 'ifc' || formatLower === 'zip';
+};
+
 // Auto-detect asset category based on file format
 const detectAssetCategory = (fileName: string, mimeType: string): 'single_model' | 'large_area' => {
   const format = detectSourceFormat(fileName, mimeType);
@@ -158,12 +165,6 @@ const detectAssetCategory = (fileName: string, mimeType: string): 'single_model'
   
   // Default: single_model
   return 'single_model';
-};
-
-// Formats that can be either GIS (Cesium) or Model Viewer (standalone)
-const isAmbiguousModelFormat = (format: string) => {
-  const lower = format.toLowerCase();
-  return lower === 'glb' || lower === 'gltf' || lower === 'obj' || lower === 'fbx' || lower === 'ifc' || lower === 'zip';
 };
 
 export const WorkspacePage: React.FC = () => {
@@ -969,6 +970,13 @@ export const WorkspacePage: React.FC = () => {
                                 title="Görüntüle"
                               >
                                 <ExternalLink className="w-4 h-4" />
+                              </button>
+                              <button
+                                onClick={() => navigate(`/viewer/${selectedProject}?edit=true`)}
+                                className="p-2 rounded-lg bg-purple-500/10 hover:bg-purple-500/20 text-purple-400 transition-colors"
+                                title="Düzenle"
+                              >
+                                <Edit className="w-4 h-4" />
                               </button>
                               <button
                                 onClick={async () => {

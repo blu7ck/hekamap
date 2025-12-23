@@ -123,6 +123,7 @@ export const CesiumViewerPage: React.FC = () => {
   const { projectId } = useParams<{ projectId: string }>();
   const [searchParams] = useSearchParams();
   const { profile, user } = useAuth();
+  const editModeParam = searchParams.get('edit') === 'true';
   const viewerContainerRef = useRef<HTMLDivElement>(null);
   const viewerRef = useRef<Cesium.Viewer | null>(null);
   const watermarkRef = useRef<(() => void) | null>(null);
@@ -137,7 +138,7 @@ export const CesiumViewerPage: React.FC = () => {
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [layers, setLayers] = useState<ViewerLayer[]>([]);
-  const [mode, setMode] = useState<Mode>('view');
+  const [mode, setMode] = useState<Mode>(editModeParam ? 'edit' : 'view');
   const [activeTool, setActiveTool] = useState<ActiveTool>('none');
   const [measureResult, setMeasureResult] = useState<string | null>(null);
 
@@ -443,13 +444,36 @@ export const CesiumViewerPage: React.FC = () => {
       setModelViewerReady(true);
       return;
     }
-    const script = document.createElement('script');
-    script.src = 'https://unpkg.com/@google/model-viewer/dist/model-viewer.min.js';
-    script.async = true;
-    script.dataset.modelViewer = 'true';
-    script.onload = () => setModelViewerReady(true);
-    script.onerror = () => console.warn('model-viewer script load failed');
-    document.head.appendChild(script);
+    // Try multiple CDNs for better reliability
+    const cdnUrls = [
+      'https://unpkg.com/@google/model-viewer@3.4.0/dist/model-viewer.min.js',
+      'https://cdn.jsdelivr.net/npm/@google/model-viewer@3.4.0/dist/model-viewer.min.js',
+      'https://unpkg.com/@google/model-viewer/dist/model-viewer.min.js',
+    ];
+    
+    let currentIndex = 0;
+    const tryLoadScript = () => {
+      if (currentIndex >= cdnUrls.length) {
+        console.warn('model-viewer script failed to load from all CDNs');
+        return;
+      }
+      
+      const script = document.createElement('script');
+      script.src = cdnUrls[currentIndex];
+      script.async = true;
+      script.dataset.modelViewer = 'true';
+      script.onload = () => {
+        setModelViewerReady(true);
+        console.log('model-viewer loaded from:', cdnUrls[currentIndex]);
+      };
+      script.onerror = () => {
+        currentIndex++;
+        tryLoadScript();
+      };
+      document.head.appendChild(script);
+    };
+    
+    tryLoadScript();
   }, []);
 
   // Check if viewer access is required
@@ -917,12 +941,18 @@ export const CesiumViewerPage: React.FC = () => {
 
       const signed: SignedAsset[] = [];
       for (const asset of metas) {
-        // Use proxy endpoint for CORS support (especially for KML/GeoJSON that need CORS)
-        // For large files (3D Tiles, GLB), we can still use signed URLs if CORS is configured
+        const mime = asset.mime_type?.toLowerCase() || '';
+        const name = asset.name?.toLowerCase() || '';
+        const isGlb = name.endsWith('.glb') || name.endsWith('.gltf') || mime.includes('gltf');
+        
+        // Use proxy endpoint for CORS support:
+        // - KML/GeoJSON (Cesium fetches directly)
+        // - GLB/GLTF (model-viewer and Cesium need CORS)
         const useProxy = asset.mime_type === 'application/vnd.google-earth.kml+xml' ||
                         asset.mime_type === 'application/vnd.google-earth.kmz' ||
                         asset.mime_type === 'application/geo+json' ||
-                        asset.mime_type === 'application/json';
+                        asset.mime_type === 'application/json' ||
+                        isGlb;
         
         if (useProxy) {
           // Use proxy endpoint for CORS support
@@ -1040,14 +1070,15 @@ export const CesiumViewerPage: React.FC = () => {
     );
   }
 
-  // Check if we should use model-viewer: GLB/GLTF files that user selected "Model Viewer" mode
-  // We check by file extension since asset_category is always single_model/large_area
+  // Check if we should use model-viewer: GLB/GLTF files that user selected "Model" mode
+  // We check by file extension and metadata (viewing_mode stored in asset metadata)
+  // For now, use model-viewer if single GLB/GLTF asset (can be enhanced with metadata later)
   const modelViewerAsset = assets.find((a) => {
     const name = a.name?.toLowerCase() || '';
     const mime = a.mime_type?.toLowerCase() || '';
     const isGlb = name.endsWith('.glb') || name.endsWith('.gltf') || mime.includes('gltf');
-    // For now, use model-viewer for all GLB/GLTF files (can be enhanced with metadata later)
-    return isGlb && assets.length === 1; // Only if single asset
+    // Use model-viewer for GLB/GLTF if single asset (user choice stored in metadata later)
+    return isGlb && assets.length === 1;
   });
   
   if (modelViewerAsset) {
