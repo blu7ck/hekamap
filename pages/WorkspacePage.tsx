@@ -130,6 +130,35 @@ const getFormatInfo = (format: string): { name: string; description: string; req
   };
 };
 
+// Auto-detect asset category based on file format
+const detectAssetCategory = (fileName: string, mimeType: string): 'single_model' | 'large_area' => {
+  const format = detectSourceFormat(fileName, mimeType);
+  const formatLower = format.toLowerCase();
+  
+  // Large area formats (LiDAR, point clouds) → large_area
+  if (formatLower === 'las' || formatLower === 'laz') {
+    return 'large_area';
+  }
+  
+  // Single model formats (OBJ, FBX, IFC) → single_model
+  if (formatLower === 'obj' || formatLower === 'fbx' || formatLower === 'ifc') {
+    return 'single_model';
+  }
+  
+  // ZIP files: default to single_model (will be determined by content during processing)
+  if (formatLower === 'zip') {
+    return 'single_model';
+  }
+  
+  // Direct viewable formats: default to single_model (category doesn't matter for direct viewable)
+  if (formatLower === 'glb' || formatLower === 'gltf' || formatLower === 'geojson' || formatLower === 'kml') {
+    return 'single_model';
+  }
+  
+  // Default: single_model
+  return 'single_model';
+};
+
 export const WorkspacePage: React.FC = () => {
   const { signOut, profile } = useAuth();
   const navigate = useNavigate();
