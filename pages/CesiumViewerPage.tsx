@@ -154,33 +154,39 @@ export const CesiumViewerPage: React.FC = () => {
     
     let viewer: Cesium.Viewer | null = null;
     try {
-      // Disable Cesium Ion - use plain CesiumJS
-      // Set terrain to None to avoid Ion terrain requests
+      // Disable Cesium Ion completely - use plain CesiumJS
+      // Set terrain to Ellipsoid (no external requests)
       const terrainProvider = new Cesium.EllipsoidTerrainProvider();
       
-      // Use simple black imagery provider instead of Ion
+      // Create a simple black imagery provider (no external requests)
       const imageryProvider = new Cesium.SingleTileImageryProvider({
         url: 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==',
         rectangle: Cesium.Rectangle.MAX_VALUE,
+        tileWidth: 1,
+        tileHeight: 1,
       });
       
       viewer = new Cesium.Viewer(viewerContainerRef.current, {
         requestRenderMode: true,
+        maximumRenderTimeChange: Infinity,
         timeline: false,
         animation: false,
         homeButton: false,
         geocoder: false,
         fullscreenButton: false,
-        terrainProvider: terrainProvider,
         baseLayerPicker: false, // Disable base layer picker (uses Ion)
+        terrainProvider: terrainProvider,
         imageryProvider: imageryProvider,
       });
       
-      // Remove default Ion imagery layers
+      // Remove all default imagery layers (they use Ion)
       viewer.imageryLayers.removeAll();
       
+      // Add our simple black imagery
+      viewer.imageryLayers.addImageryProvider(imageryProvider);
+      
       // Ensure no Ion token is set
-      if (Cesium.Ion && Cesium.Ion.defaultAccessToken) {
+      if (Cesium.Ion) {
         Cesium.Ion.defaultAccessToken = '';
       }
       
@@ -359,53 +365,38 @@ export const CesiumViewerPage: React.FC = () => {
           }
           // glTF/GLB Models
           else if (mime === 'model/gltf-binary' || mime === 'model/gltf+json' || asset.name?.endsWith('.gltf') || asset.name?.endsWith('.glb')) {
-            // Use Entity with modelGraphics - more reliable than Model.fromGltf
+            checkViewer();
+            // Use Entity with modelGraphics - this is the recommended way
+            const entity = viewer.entities.add({
+              name: asset.name,
+              position: Cesium.Cartesian3.fromDegrees(0, 0, 0), // Default position at origin
+              model: {
+                uri: url,
+                minimumPixelSize: 128,
+                maximumScale: 20000,
+                scale: 1.0,
+              },
+            });
+            
+            // Wait for model to load and then zoom
+            // Entity.modelGraphics loads asynchronously, so we wait a bit
+            await new Promise(resolve => setTimeout(resolve, 500));
+            checkViewer();
+            
+            // Try to zoom to the entity
             try {
-              checkViewer();
-              const entity = viewer.entities.add({
-                name: asset.name,
-                model: {
-                  uri: url,
-                  minimumPixelSize: 128,
-                  maximumScale: 20000,
+              await viewer.zoomTo(entity);
+            } catch (zoomError) {
+              // If zoom fails, try flying to a default view
+              console.warn('Zoom to entity failed, using default view:', zoomError);
+              viewer.camera.flyTo({
+                destination: Cesium.Cartesian3.fromDegrees(0, 0, 1000),
+                orientation: {
+                  heading: 0.0,
+                  pitch: -Cesium.Math.PI_OVER_TWO,
+                  roll: 0.0,
                 },
               });
-              
-              // Wait for model to load - Entity.modelGraphics doesn't have readyPromise
-              // Instead, wait a bit and then zoom (Cesium will load model asynchronously)
-              await new Promise(resolve => setTimeout(resolve, 100));
-              checkViewer();
-              
-              // Try to zoom - if model isn't ready, Cesium will handle it
-              try {
-                await viewer.zoomTo(entity);
-              } catch (zoomError) {
-                // If zoom fails, model might still be loading - wait a bit more
-                await new Promise(resolve => setTimeout(resolve, 500));
-                checkViewer();
-                await viewer.zoomTo(entity);
-              }
-            } catch (entityError: any) {
-              if (!isMounted || !viewerRef.current) return;
-              console.error('Entity model load error:', entityError);
-              // Fallback: try Model.fromGltf if available
-              try {
-                checkViewer();
-                if (Cesium.Model && typeof Cesium.Model.fromGltf === 'function') {
-                  const model = await Cesium.Model.fromGltf({ url });
-                  checkViewer();
-                  viewer.scene.primitives.add(model);
-                  primitives.push(model);
-                  await model.readyPromise;
-                  checkViewer();
-                  await viewer.zoomTo(model);
-                } else {
-                  throw new Error('Model.fromGltf is not available');
-                }
-              } catch (modelError: any) {
-                console.error('Model.fromGltf error:', modelError);
-                throw new Error(`Model yüklenemedi: ${entityError.message || modelError.message}`);
-              }
             }
           }
           // GeoJSON
@@ -493,77 +484,63 @@ export const CesiumViewerPage: React.FC = () => {
             asset.name?.endsWith('.kmz')
           ) {
             checkViewer();
-            const kml = await Cesium.KmlDataSource.load(url);
+            // Load KML with camera and canvas for proper initialization
+            const kml = await Cesium.KmlDataSource.load(url, {
+              camera: viewer.camera,
+              canvas: viewer.canvas,
+            });
             checkViewer();
             viewer.dataSources.add(kml);
             dataSources.push(kml);
             
-            // Wait for KML to fully load
-            await new Promise(resolve => setTimeout(resolve, 500));
+            // Wait for KML to fully load and process
+            await new Promise(resolve => setTimeout(resolve, 1000));
             checkViewer();
             
-            // Try default zoomTo first (it handles bounding box automatically)
+            // Try to zoom to the KML data source
             try {
               await viewer.zoomTo(kml);
             } catch (zoomError) {
-              // If zoomTo fails, try manual bounding box calculation
-              console.warn('KML zoomTo failed, trying manual calculation:', zoomError);
+              // If zoomTo fails, try to get bounding sphere from entities
+              console.warn('KML zoomTo failed, trying bounding sphere:', zoomError);
               try {
                 const entities = kml.entities.values;
-                const positions: Cesium.Cartographic[] = [];
-                
-                for (let i = 0; i < entities.length; i++) {
-                  const entity = entities[i];
-                  
-                  // Get position from entity
-                  if (entity.position) {
-                    const position = entity.position.getValue(viewer.clock.currentTime);
-                    if (position) {
-                      const cartographic = Cesium.Cartographic.fromCartesian(position);
-                      if (cartographic) {
-                        positions.push(cartographic);
-                      }
+                if (entities.length > 0) {
+                  // Get bounding sphere from all entities
+                  const boundingSpheres: Cesium.BoundingSphere[] = [];
+                  for (let i = 0; i < entities.length; i++) {
+                    const entity = entities[i];
+                    if (entity.boundingSphere) {
+                      boundingSpheres.push(entity.boundingSphere);
                     }
                   }
                   
-                  // Get positions from polygon/polyline
-                  if (entity.polygon) {
-                    const hierarchy = entity.polygon.hierarchy?.getValue(viewer.clock.currentTime);
-                    if (hierarchy && hierarchy.positions) {
-                      for (let j = 0; j < hierarchy.positions.length; j++) {
-                        const cartographic = Cesium.Cartographic.fromCartesian(hierarchy.positions[j]);
-                        if (cartographic) {
-                          positions.push(cartographic);
-                        }
-                      }
-                    }
-                  }
-                  
-                  if (entity.polyline) {
-                    const positionsArray = entity.polyline.positions?.getValue(viewer.clock.currentTime);
-                    if (positionsArray) {
-                      for (let j = 0; j < positionsArray.length; j++) {
-                        const cartographic = Cesium.Cartographic.fromCartesian(positionsArray[j]);
-                        if (cartographic) {
-                          positions.push(cartographic);
-                        }
-                      }
-                    }
+                  if (boundingSpheres.length > 0) {
+                    checkViewer();
+                    const boundingSphere = Cesium.BoundingSphere.fromBoundingSpheres(boundingSpheres);
+                    viewer.camera.flyTo({
+                      destination: boundingSphere.center,
+                      orientation: {
+                        heading: 0.0,
+                        pitch: -Cesium.Math.PI_OVER_TWO,
+                        roll: 0.0,
+                      },
+                      complete: () => {
+                        if (!isMounted || !viewerRef.current || viewerRef.current.isDestroyed()) return;
+                        viewer.camera.flyTo({
+                          destination: boundingSphere,
+                        });
+                      },
+                    });
+                  } else {
+                    // Fallback: fly to a default location
+                    viewer.camera.flyTo({
+                      destination: Cesium.Cartesian3.fromDegrees(0, 0, 10000000),
+                    });
                   }
                 }
-                
-                // If we have positions, create a rectangle and zoom to it
-                if (positions.length > 0) {
-                  checkViewer();
-                  const rectangle = Cesium.Rectangle.fromCartographicArray(positions);
-                  
-                  // Use Rectangle directly as destination - Cesium handles it automatically
-                  viewer.camera.flyTo({
-                    destination: rectangle,
-                  });
-                }
-              } catch (manualZoomError) {
-                console.error('Manual KML zoom failed:', manualZoomError);
+              } catch (fallbackError) {
+                console.error('KML fallback zoom failed:', fallbackError);
               }
             }
           }
