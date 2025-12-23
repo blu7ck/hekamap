@@ -18,6 +18,26 @@ type AssetMeta = {
 
 type SignedAsset = AssetMeta & { signed_url: string };
 
+type LayerType = 'kml' | 'geojson' | 'tileset' | 'model' | 'imagery';
+
+type ViewerLayer = {
+  id: string;
+  name: string;
+  type: LayerType;
+  visible: boolean;
+  opacity: number; // 0..1
+};
+
+type Mode = 'view' | 'edit';
+
+type ActiveTool =
+  | 'none'
+  | 'measure-distance'
+  | 'measure-area'
+  | 'draw-point'
+  | 'draw-line'
+  | 'draw-polygon';
+
 const setCesiumBase = () => {
   const base = typeof CESIUM_BASE_URL !== 'undefined' ? CESIUM_BASE_URL : '/cesium';
   // @ts-expect-error buildModuleUrl exists in Cesium namespace
@@ -93,10 +113,288 @@ export const CesiumViewerPage: React.FC = () => {
   const viewerRef = useRef<Cesium.Viewer | null>(null);
   const watermarkRef = useRef<(() => void) | null>(null);
   const [selectedMapProvider, setSelectedMapProvider] = useState<string>('openStreetMap');
+  const layerHandlesRef = useRef<Record<string, { type: LayerType; handle: any }>>({});
+  const drawingHandlerRef = useRef<Cesium.ScreenSpaceEventHandler | null>(null);
+  const drawingEntitiesRef = useRef<Cesium.Entity[]>([]);
+  const tempPositionsRef = useRef<Cesium.Cartesian3[]>([]);
+  const sketchEntityRef = useRef<Cesium.Entity | null>(null);
 
   const [assets, setAssets] = useState<SignedAsset[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
+  const [layers, setLayers] = useState<ViewerLayer[]>([]);
+  const [mode, setMode] = useState<Mode>('view');
+  const [activeTool, setActiveTool] = useState<ActiveTool>('none');
+  const [measureResult, setMeasureResult] = useState<string | null>(null);
+
+  const canEdit =
+    (profile?.role === 'owner' || profile?.role === 'admin' || profile?.role === 'moderator') &&
+    !searchParams.get('token');
+
+  const clearLayerHandles = (viewer?: Cesium.Viewer | null) => {
+    const currentViewer = viewer ?? viewerRef.current;
+    if (!currentViewer) return;
+
+    Object.entries(layerHandlesRef.current).forEach(([id, info]) => {
+      try {
+        if (info.type === 'tileset' && currentViewer.scene?.primitives?.contains(info.handle)) {
+          currentViewer.scene.primitives.remove(info.handle);
+        } else if (
+          (info.type === 'kml' || info.type === 'geojson') &&
+          currentViewer.dataSources?.contains(info.handle)
+        ) {
+          currentViewer.dataSources.remove(info.handle, true);
+        } else if (info.type === 'model') {
+          currentViewer.entities.remove(info.handle);
+        } else if (info.type === 'imagery') {
+          currentViewer.imageryLayers.remove(info.handle);
+        }
+      } catch (e) {
+        console.warn('Layer cleanup error for', id, e);
+      }
+    });
+    layerHandlesRef.current = {};
+    setLayers([]);
+  };
+
+  const applyLayerVisibility = (layerId: string, visible: boolean) => {
+    const viewer = viewerRef.current;
+    const info = layerHandlesRef.current[layerId];
+    if (!viewer || !info) return;
+
+    try {
+      if (info.type === 'tileset') {
+        info.handle.show = visible;
+      } else if (info.type === 'kml' || info.type === 'geojson') {
+        info.handle.show = visible;
+      } else if (info.type === 'model') {
+        info.handle.show = visible;
+      } else if (info.type === 'imagery') {
+        info.handle.show = visible;
+      }
+    } catch (err) {
+      console.warn('Layer visibility update failed:', err);
+    }
+  };
+
+  const applyLayerOpacity = (layerId: string, opacity: number) => {
+    const viewer = viewerRef.current;
+    const info = layerHandlesRef.current[layerId];
+    if (!viewer || !info) return;
+
+    try {
+      if (info.type === 'tileset') {
+        info.handle.style = new Cesium.Cesium3DTileStyle({
+          color: `color('white', ${opacity.toFixed(2)})`,
+        });
+      } else if (info.type === 'model') {
+        if (info.handle.model) {
+          info.handle.model.color = Cesium.Color.WHITE.withAlpha(opacity);
+        }
+      } else if (info.type === 'kml' || info.type === 'geojson') {
+        // Best effort: apply alpha to known graphics
+        const ds = info.handle as Cesium.DataSource;
+        ds.entities?.values?.forEach((entity) => {
+          if (entity.billboard && entity.billboard.color) {
+            entity.billboard.color = Cesium.Color.WHITE.withAlpha(opacity);
+          }
+          if (entity.point && entity.point.color) {
+            entity.point.color = Cesium.Color.WHITE.withAlpha(opacity);
+          }
+          if (entity.polyline && entity.polyline.material) {
+            entity.polyline.material = Cesium.Color.WHITE.withAlpha(opacity);
+          }
+          if (entity.polygon && entity.polygon.material) {
+            entity.polygon.material = Cesium.Color.WHITE.withAlpha(opacity);
+          }
+        });
+      } else if (info.type === 'imagery') {
+        info.handle.alpha = opacity;
+      }
+    } catch (err) {
+      console.warn('Layer opacity update failed:', err);
+    }
+  };
+
+  const toggleLayerVisibility = (layerId: string, visible: boolean) => {
+    setLayers((prev) => prev.map((l) => (l.id === layerId ? { ...l, visible } : l)));
+    applyLayerVisibility(layerId, visible);
+  };
+
+  const changeLayerOpacity = (layerId: string, opacity: number) => {
+    setLayers((prev) => prev.map((l) => (l.id === layerId ? { ...l, opacity } : l)));
+    applyLayerOpacity(layerId, opacity);
+  };
+
+  const stopDrawingTool = () => {
+    const viewer = viewerRef.current;
+    if (drawingHandlerRef.current) {
+      drawingHandlerRef.current.destroy();
+      drawingHandlerRef.current = null;
+    }
+    if (viewer && sketchEntityRef.current) {
+      viewer.entities.remove(sketchEntityRef.current);
+    }
+    sketchEntityRef.current = null;
+    tempPositionsRef.current = [];
+    setActiveTool('none');
+  };
+
+  const clearDrawings = () => {
+    const viewer = viewerRef.current;
+    if (!viewer) return;
+    drawingEntitiesRef.current.forEach((ent) => {
+      try {
+        viewer.entities.remove(ent);
+      } catch (e) {
+        console.warn('Draw entity remove error', e);
+      }
+    });
+    drawingEntitiesRef.current = [];
+  };
+
+  const computeDistanceKm = (positions: Cesium.Cartographic[]) => {
+    if (positions.length < 2) return 0;
+    let total = 0;
+    for (let i = 1; i < positions.length; i++) {
+      const g = new Cesium.EllipsoidGeodesic(positions[i - 1], positions[i]);
+      total += g.surfaceDistance;
+    }
+    return total / 1000;
+  };
+
+  // Spherical polygon area approximation (km²)
+  const computeAreaKm2 = (positions: Cesium.Cartographic[]) => {
+    if (positions.length < 3) return 0;
+    let total = 0;
+    for (let i = 0; i < positions.length; i++) {
+      const p1 = positions[i];
+      const p2 = positions[(i + 1) % positions.length];
+      total += (p2.longitude - p1.longitude) * (2 + Math.sin(p1.latitude) + Math.sin(p2.latitude));
+    }
+    const areaMeters = Math.abs(total) * (Math.pow(Cesium.Ellipsoid.WGS84.maximumRadius, 2) / 2);
+    return areaMeters / 1_000_000;
+  };
+
+  const formatNumber = (value: number, unit: string) => {
+    if (value >= 1000) return `${value.toFixed(1)} ${unit}`;
+    if (value >= 1) return `${value.toFixed(2)} ${unit}`;
+    return `${value.toFixed(3)} ${unit}`;
+  };
+
+  const startTool = (tool: ActiveTool) => {
+    const viewer = viewerRef.current;
+    if (!viewer || viewer.isDestroyed()) return;
+
+    // Reset current tool
+    stopDrawingTool();
+    setMeasureResult(null);
+
+    if (tool === 'none') return;
+
+    setActiveTool(tool);
+    tempPositionsRef.current = [];
+
+    const handler = new Cesium.ScreenSpaceEventHandler(viewer.scene.canvas);
+    drawingHandlerRef.current = handler;
+
+    const addPoint = (position: Cesium.Cartesian3) => {
+      const entity = viewer.entities.add({
+        position,
+        point: { pixelSize: 8, color: Cesium.Color.CYAN },
+      });
+      drawingEntitiesRef.current.push(entity);
+    };
+
+    const updateSketch = () => {
+      const positions = tempPositionsRef.current;
+      if (!positions || positions.length === 0) return;
+
+      if (sketchEntityRef.current && viewer.entities.contains(sketchEntityRef.current)) {
+        viewer.entities.remove(sketchEntityRef.current);
+      }
+
+      if (tool === 'draw-point') {
+        const entity = viewer.entities.add({
+          position: positions[positions.length - 1],
+          point: { pixelSize: 10, color: Cesium.Color.YELLOW },
+        });
+        sketchEntityRef.current = entity;
+      } else if (tool === 'draw-line' || tool === 'measure-distance') {
+        const entity = viewer.entities.add({
+          polyline: {
+            positions,
+            width: 3,
+            material: Cesium.Color.YELLOW,
+          },
+        });
+        sketchEntityRef.current = entity;
+      } else if (tool === 'draw-polygon' || tool === 'measure-area') {
+        if (positions.length < 3) return;
+        const entity = viewer.entities.add({
+          polygon: {
+            hierarchy: positions,
+            material: Cesium.Color.YELLOW.withAlpha(0.3),
+            outline: true,
+            outlineColor: Cesium.Color.YELLOW,
+          },
+        });
+        sketchEntityRef.current = entity;
+      }
+    };
+
+    const finalizeMeasurement = () => {
+      const cartos = tempPositionsRef.current.map((c) => Cesium.Cartographic.fromCartesian(c));
+      if (tool === 'measure-distance' && cartos.length >= 2) {
+        const km = computeDistanceKm(cartos);
+        setMeasureResult(`Mesafe: ${formatNumber(km, 'km')}`);
+      } else if (tool === 'measure-area' && cartos.length >= 3) {
+        const km2 = computeAreaKm2(cartos);
+        setMeasureResult(`Alan: ${formatNumber(km2, 'km²')}`);
+      }
+    };
+
+    handler.setInputAction((click) => {
+      const earthPosition =
+        viewer.camera.pickEllipsoid(click.position, viewer.scene.globe.ellipsoid) ||
+        viewer.scene.pickPosition(click.position);
+      if (!earthPosition) return;
+
+      tempPositionsRef.current.push(earthPosition);
+
+      if (tool === 'draw-point') {
+        addPoint(earthPosition);
+        setMeasureResult('Nokta eklendi');
+        stopDrawingTool();
+        return;
+      }
+
+      updateSketch();
+    }, Cesium.ScreenSpaceEventType.LEFT_CLICK);
+
+    const finish = () => {
+      if (tool === 'draw-line' || tool === 'draw-polygon') {
+        if (sketchEntityRef.current) {
+          drawingEntitiesRef.current.push(sketchEntityRef.current);
+          sketchEntityRef.current = null;
+        }
+        setMeasureResult('Çizim kaydedildi');
+      } else if (tool === 'measure-distance' || tool === 'measure-area') {
+        finalizeMeasurement();
+      }
+      stopDrawingTool();
+    };
+
+    handler.setInputAction(finish, Cesium.ScreenSpaceEventType.RIGHT_CLICK);
+    handler.setInputAction(finish, Cesium.ScreenSpaceEventType.LEFT_DOUBLE_CLICK);
+  };
+
+  // View moduna dönünce aktif araçları kapat
+  useEffect(() => {
+    if (mode === 'view') {
+      stopDrawingTool();
+    }
+  }, [mode]);
   
   // Viewer access PIN verification
   const viewerToken = searchParams.get('token');
@@ -252,6 +550,11 @@ export const CesiumViewerPage: React.FC = () => {
       // Store map providers for later use
       (viewer as any)._mapProviders = mapProviders;
       
+      // Disable default double-click zoom to avoid conflicts with drawing tools
+      viewer.cesiumWidget?.screenSpaceEventHandler?.removeInputAction(
+        Cesium.ScreenSpaceEventType.LEFT_DOUBLE_CLICK
+      );
+      
       viewerRef.current = viewer;
 
       // Wait for viewer to be fully initialized
@@ -315,6 +618,9 @@ export const CesiumViewerPage: React.FC = () => {
 
     return () => {
       try {
+        stopDrawingTool();
+        clearDrawings();
+        clearLayerHandles(viewer);
         if (viewer && !viewer.isDestroyed()) {
           if (watermarkRef.current && viewer.scene) {
             viewer.scene.postRender.removeEventListener(watermarkRef.current);
@@ -332,92 +638,36 @@ export const CesiumViewerPage: React.FC = () => {
 
   useEffect(() => {
     const viewer = viewerRef.current;
-    if (!viewer || assets.length === 0) return;
-    
-    // Ensure viewer is fully initialized and not destroyed
-    try {
-      if (viewer.isDestroyed()) {
-        console.warn('Viewer is destroyed');
-        return;
+    if (!viewer) return;
+    if (assets.length === 0) {
+      clearLayerHandles(viewer);
+      return;
+    }
+
+    let isMounted = true;
+
+    const ready = () => {
+      try {
+        if (!viewerRef.current || viewerRef.current.isDestroyed()) return false;
+        if (!viewerRef.current.scene || !viewerRef.current.dataSources || !viewerRef.current.entities)
+          return false;
+        return true;
+      } catch (e) {
+        console.warn('Viewer readiness check failed', e);
+        return false;
       }
-    } catch (e) {
-      // isDestroyed might throw if viewer is in invalid state
-      console.warn('Viewer state check failed:', e);
-      return;
-    }
-    
-    // Comprehensive initialization check
-    if (!viewer.cesiumWidget) {
-      console.warn('Viewer cesiumWidget not ready');
-      return;
-    }
-    
-    if (!viewer.scene) {
-      console.warn('Viewer scene not ready');
-      return;
-    }
-    
-    if (!viewer.entities) {
-      console.warn('Viewer entities not ready');
-      return;
-    }
-    
-    // Additional check: ensure scene components are ready
-    if (!viewer.scene.globe) {
-      console.warn('Scene globe not ready');
-      return;
-    }
-    
-    if (!viewer.scene.primitives) {
-      console.warn('Scene primitives not ready');
-      return;
-    }
-    
-    if (!viewer.dataSources) {
-      console.warn('Viewer dataSources not ready');
-      return;
-    }
-    
-    // Wait a bit more to ensure everything is stable
+    };
+
     const loadAssets = async () => {
-      await new Promise(resolve => setTimeout(resolve, 100));
-      
-      // Re-check after delay
-      if (!viewerRef.current || viewerRef.current.isDestroyed()) {
-        console.warn('Viewer destroyed during wait');
-        return;
-      }
-      
-      const currentViewer = viewerRef.current;
-      if (!currentViewer.scene || !currentViewer.entities || !currentViewer.dataSources) {
-        console.warn('Viewer not ready after wait');
-        return;
-      }
+      await new Promise((resolve) => setTimeout(resolve, 150));
+      if (!ready()) return;
 
-      const primitives: (Cesium.Cesium3DTileset | Cesium.Model | Cesium.DataSource)[] = [];
-      const dataSources: Cesium.DataSource[] = [];
-      let isMounted = true;
-
-      // Check if viewer is still valid before each operation
-      const checkViewer = () => {
-        if (!isMounted || !viewerRef.current) {
-          throw new Error('Viewer unmounted');
-        }
-        try {
-          if (viewerRef.current.isDestroyed()) {
-            throw new Error('Viewer destroyed');
-          }
-        } catch (e) {
-          throw new Error('Viewer in invalid state');
-        }
-        if (!viewerRef.current.cesiumWidget || !viewerRef.current.scene) {
-          throw new Error('Viewer not initialized');
-        }
-      };
+      clearLayerHandles(viewer);
+      const nextLayers: ViewerLayer[] = [];
 
       try {
         for (const asset of assets) {
-          checkViewer();
+          if (!isMounted || !ready()) break;
           const mime = asset.mime_type?.toLowerCase() || '';
           const url = asset.signed_url;
 
@@ -430,20 +680,23 @@ export const CesiumViewerPage: React.FC = () => {
             asset.name?.endsWith('.pnts') ||
             asset.name?.endsWith('.cmpt')
           ) {
-            checkViewer();
             const tileset = await Cesium.Cesium3DTileset.fromUrl(url);
-            if (!isMounted || !viewerRef.current || viewerRef.current.isDestroyed()) return;
+            if (!ready()) break;
             viewer.scene.primitives.add(tileset);
-            primitives.push(tileset);
+            layerHandlesRef.current[asset.id] = { type: 'tileset', handle: tileset };
+            nextLayers.push({ id: asset.id, name: asset.name, type: 'tileset', visible: true, opacity: 1 });
             await viewer.zoomTo(tileset);
           }
           // glTF/GLB Models
-          else if (mime === 'model/gltf-binary' || mime === 'model/gltf+json' || asset.name?.endsWith('.gltf') || asset.name?.endsWith('.glb')) {
-            checkViewer();
-            // Use Entity with modelGraphics - this is the recommended way for CesiumJS
+          else if (
+            mime === 'model/gltf-binary' ||
+            mime === 'model/gltf+json' ||
+            asset.name?.endsWith('.gltf') ||
+            asset.name?.endsWith('.glb')
+          ) {
             const entity = viewer.entities.add({
               name: asset.name,
-              position: Cesium.Cartesian3.fromDegrees(0, 0, 0), // Default position at origin
+              position: Cesium.Cartesian3.fromDegrees(0, 0, 0),
               model: {
                 uri: url,
                 minimumPixelSize: 128,
@@ -452,41 +705,22 @@ export const CesiumViewerPage: React.FC = () => {
                 show: true,
               },
             });
-            
-            // Wait for model to load - Entity.modelGraphics loads asynchronously
-            // We need to wait for the model to actually load before zooming
-            let modelLoaded = false;
+
             let attempts = 0;
-            const maxAttempts = 20; // 10 seconds max wait
-            
-            while (!modelLoaded && attempts < maxAttempts) {
-              await new Promise(resolve => setTimeout(resolve, 500));
-              checkViewer();
-              
-              // Check if model is loaded by checking if entity has a modelGraphics
+            const maxAttempts = 20;
+            while (attempts < maxAttempts && ready()) {
+              await new Promise((resolve) => setTimeout(resolve, 500));
               const entityModel = viewer.entities.getById(entity.id)?.model;
-              if (entityModel) {
-                // Check if model is ready (if it has a ready property)
-                try {
-                  if ((entityModel as any).ready === true || (entityModel as any).readyPromise) {
-                    modelLoaded = true;
-                    break;
-                  }
-                } catch (e) {
-                  // Model might be loading
-                }
+              if (entityModel && ((entityModel as any).ready === true || (entityModel as any).readyPromise)) {
+                break;
               }
               attempts++;
             }
-            
-            // Try to zoom to the entity
+
             try {
-              // Always try zoomTo - it might work even if model isn't fully loaded
               await viewer.zoomTo(entity);
             } catch (zoomError) {
-              // If zoom fails, fly to a default view
               console.warn('Zoom to entity failed, using default view:', zoomError);
-              checkViewer();
               viewer.camera.flyTo({
                 destination: Cesium.Cartesian3.fromDegrees(0, 0, 1000),
                 orientation: {
@@ -496,78 +730,59 @@ export const CesiumViewerPage: React.FC = () => {
                 },
               });
             }
+
+            layerHandlesRef.current[asset.id] = { type: 'model', handle: entity };
+            nextLayers.push({ id: asset.id, name: asset.name, type: 'model', visible: true, opacity: 1 });
           }
           // GeoJSON
           else if (mime === 'application/geo+json' || mime === 'application/json' || asset.name?.endsWith('.geojson')) {
-            checkViewer();
             const geoJson = await Cesium.GeoJsonDataSource.load(url);
-            checkViewer();
+            if (!ready()) break;
             viewer.dataSources.add(geoJson);
-            dataSources.push(geoJson);
-            
-            // Wait for GeoJSON to fully load
-            await new Promise(resolve => setTimeout(resolve, 300));
-            checkViewer();
-            
-            // Try default zoomTo first (it handles bounding box automatically)
+            layerHandlesRef.current[asset.id] = { type: 'geojson', handle: geoJson };
+            nextLayers.push({ id: asset.id, name: asset.name, type: 'geojson', visible: true, opacity: 1 });
+
+            await new Promise((resolve) => setTimeout(resolve, 300));
             try {
               await viewer.zoomTo(geoJson);
             } catch (zoomError) {
-              // If zoomTo fails, try manual bounding box calculation
               console.warn('GeoJSON zoomTo failed, trying manual calculation:', zoomError);
               try {
                 const entities = geoJson.entities.values;
                 const positions: Cesium.Cartographic[] = [];
-                
+
                 for (let i = 0; i < entities.length; i++) {
                   const entity = entities[i];
-                  
-                  // Get position from entity
+
                   if (entity.position) {
                     const position = entity.position.getValue(viewer.clock.currentTime);
                     if (position) {
-                      const cartographic = Cesium.Cartographic.fromCartesian(position);
-                      if (cartographic) {
-                        positions.push(cartographic);
-                      }
+                      positions.push(Cesium.Cartographic.fromCartesian(position));
                     }
                   }
-                  
-                  // Get positions from polygon/polyline
+
                   if (entity.polygon) {
                     const hierarchy = entity.polygon.hierarchy?.getValue(viewer.clock.currentTime);
-                    if (hierarchy && hierarchy.positions) {
-                      for (let j = 0; j < hierarchy.positions.length; j++) {
-                        const cartographic = Cesium.Cartographic.fromCartesian(hierarchy.positions[j]);
-                        if (cartographic) {
-                          positions.push(cartographic);
-                        }
-                      }
+                    if (hierarchy?.positions) {
+                      hierarchy.positions.forEach((p: Cesium.Cartesian3) => {
+                        positions.push(Cesium.Cartographic.fromCartesian(p));
+                      });
                     }
                   }
-                  
+
                   if (entity.polyline) {
-                    const positionsArray = entity.polyline.positions?.getValue(viewer.clock.currentTime);
-                    if (positionsArray) {
-                      for (let j = 0; j < positionsArray.length; j++) {
-                        const cartographic = Cesium.Cartographic.fromCartesian(positionsArray[j]);
-                        if (cartographic) {
-                          positions.push(cartographic);
-                        }
-                      }
+                    const posArr = entity.polyline.positions?.getValue(viewer.clock.currentTime);
+                    if (posArr) {
+                      posArr.forEach((p: Cesium.Cartesian3) => {
+                        positions.push(Cesium.Cartographic.fromCartesian(p));
+                      });
                     }
                   }
                 }
-                
-                // If we have positions, create a rectangle and zoom to it
+
                 if (positions.length > 0) {
-                  checkViewer();
                   const rectangle = Cesium.Rectangle.fromCartographicArray(positions);
-                  
-                  // Use Rectangle directly as destination - Cesium handles it automatically
-                  viewer.camera.flyTo({
-                    destination: rectangle,
-                  });
+                  viewer.camera.flyTo({ destination: rectangle });
                 }
               } catch (manualZoomError) {
                 console.error('Manual GeoJSON zoom failed:', manualZoomError);
@@ -581,30 +796,20 @@ export const CesiumViewerPage: React.FC = () => {
             asset.name?.endsWith('.kml') ||
             asset.name?.endsWith('.kmz')
           ) {
-            checkViewer();
-            // Load KML with camera and canvas for proper initialization
-            const kml = await Cesium.KmlDataSource.load(url, {
-              camera: viewer.camera,
-              canvas: viewer.canvas,
-            });
-            checkViewer();
+            const kml = await Cesium.KmlDataSource.load(url, { camera: viewer.camera, canvas: viewer.canvas });
+            if (!ready()) break;
             viewer.dataSources.add(kml);
-            dataSources.push(kml);
-            
-            // Wait for KML to fully load and process
-            await new Promise(resolve => setTimeout(resolve, 1000));
-            checkViewer();
-            
-            // Try to zoom to the KML data source
+            layerHandlesRef.current[asset.id] = { type: 'kml', handle: kml };
+            nextLayers.push({ id: asset.id, name: asset.name, type: 'kml', visible: true, opacity: 1 });
+
+            await new Promise((resolve) => setTimeout(resolve, 1000));
             try {
               await viewer.zoomTo(kml);
             } catch (zoomError) {
-              // If zoomTo fails, try to get bounding sphere from entities
               console.warn('KML zoomTo failed, trying bounding sphere:', zoomError);
               try {
                 const entities = kml.entities.values;
                 if (entities.length > 0) {
-                  // Get bounding sphere from all entities
                   const boundingSpheres: Cesium.BoundingSphere[] = [];
                   for (let i = 0; i < entities.length; i++) {
                     const entity = entities[i];
@@ -612,29 +817,18 @@ export const CesiumViewerPage: React.FC = () => {
                       boundingSpheres.push(entity.boundingSphere);
                     }
                   }
-                  
+
                   if (boundingSpheres.length > 0) {
-                    checkViewer();
                     const boundingSphere = Cesium.BoundingSphere.fromBoundingSpheres(boundingSpheres);
                     viewer.camera.flyTo({
-                      destination: boundingSphere.center,
-                      orientation: {
-                        heading: 0.0,
-                        pitch: -Cesium.Math.PI_OVER_TWO,
-                        roll: 0.0,
-                      },
+                      destination: boundingSphere,
                       complete: () => {
-                        if (!isMounted || !viewerRef.current || viewerRef.current.isDestroyed()) return;
-                        viewer.camera.flyTo({
-                          destination: boundingSphere,
-                        });
+                        if (!isMounted || !ready()) return;
+                        viewer.camera.flyTo({ destination: boundingSphere });
                       },
                     });
                   } else {
-                    // Fallback: fly to a default location
-                    viewer.camera.flyTo({
-                      destination: Cesium.Cartesian3.fromDegrees(0, 0, 10000000),
-                    });
+                    viewer.camera.flyTo({ destination: Cesium.Cartesian3.fromDegrees(0, 0, 10_000_000) });
                   }
                 }
               } catch (fallbackError) {
@@ -644,42 +838,29 @@ export const CesiumViewerPage: React.FC = () => {
           }
           // Imagery (PNG/JPEG)
           else if (mime.startsWith('image/') || asset.asset_type === 'imagery') {
-            checkViewer();
-            viewer.imageryLayers.addImageryProvider(
-              new Cesium.UrlTemplateImageryProvider({ url })
+            const layer = viewer.imageryLayers.addImageryProvider(
+              new Cesium.SingleTileImageryProvider({ url })
             );
+            layerHandlesRef.current[asset.id] = { type: 'imagery', handle: layer };
+            nextLayers.push({ id: asset.id, name: asset.name, type: 'imagery', visible: true, opacity: 1 });
           }
         }
+
+        if (isMounted) {
+          setLayers(nextLayers);
+        }
       } catch (err) {
-        if (!isMounted || !viewerRef.current) return;
+        if (!isMounted) return;
         console.error('Cesium load error', err);
         setError('Cesium varlıkları yüklenemedi: ' + (err instanceof Error ? err.message : String(err)));
       }
     };
-    
+
     void loadAssets();
 
     return () => {
       isMounted = false;
-      const currentViewer = viewerRef.current;
-      if (currentViewer && !currentViewer.isDestroyed() && currentViewer.scene) {
-        primitives.forEach((p) => {
-          if (p instanceof Cesium.Cesium3DTileset || p instanceof Cesium.Model) {
-            try {
-              currentViewer.scene.primitives.remove(p);
-            } catch (e) {
-              console.warn('Error removing primitive:', e);
-            }
-          }
-        });
-        dataSources.forEach((ds) => {
-          try {
-            currentViewer.dataSources.remove(ds);
-          } catch (e) {
-            console.warn('Error removing data source:', e);
-          }
-        });
-      }
+      clearLayerHandles(viewerRef.current ?? viewer);
     };
   }, [assets]);
 
@@ -891,7 +1072,8 @@ export const CesiumViewerPage: React.FC = () => {
         </div>
         <div className="flex items-center gap-4">
           {loading && <div className="text-xs text-gray-400">Yükleniyor...</div>}
-          <div className="relative">
+          <div className="flex flex-col">
+            <span className="text-xs text-gray-500 mb-1">Harita sağlayıcısı</span>
             <select
               value={selectedMapProvider}
               onChange={(e) => handleMapProviderChange(e.target.value)}
@@ -906,9 +1088,161 @@ export const CesiumViewerPage: React.FC = () => {
           </div>
         </div>
       </div>
+      <div className="px-4 py-3 border-b border-gray-800 flex flex-wrap gap-3 items-center">
+        <div className="flex items-center gap-2">
+          <span className="text-sm text-gray-400">Mod:</span>
+          <button
+            onClick={() => setMode('view')}
+            className={`px-3 py-2 rounded-lg text-sm border ${
+              mode === 'view'
+                ? 'bg-blue-600 border-blue-500'
+                : 'bg-gray-800 border-gray-700 hover:border-gray-500'
+            }`}
+          >
+            Görüntüle
+          </button>
+          <button
+            onClick={() => canEdit && setMode('edit')}
+            disabled={!canEdit}
+            className={`px-3 py-2 rounded-lg text-sm border ${
+              mode === 'edit'
+                ? 'bg-blue-600 border-blue-500'
+                : 'bg-gray-800 border-gray-700 hover:border-gray-500'
+            } ${!canEdit ? 'opacity-50 cursor-not-allowed' : ''}`}
+          >
+            Düzenle
+          </button>
+        </div>
+        <div className="flex flex-wrap gap-2">
+          <button
+            onClick={() => startTool('measure-distance')}
+            className={`px-3 py-2 rounded-lg text-sm border ${
+              activeTool === 'measure-distance'
+                ? 'bg-green-600 border-green-500'
+                : 'bg-gray-800 border-gray-700 hover:border-gray-500'
+            }`}
+          >
+            Mesafe
+          </button>
+          <button
+            onClick={() => startTool('measure-area')}
+            className={`px-3 py-2 rounded-lg text-sm border ${
+              activeTool === 'measure-area'
+                ? 'bg-green-600 border-green-500'
+                : 'bg-gray-800 border-gray-700 hover:border-gray-500'
+            }`}
+          >
+            Alan
+          </button>
+          <button
+            onClick={() => startTool('draw-point')}
+            disabled={!canEdit || mode !== 'edit'}
+            className={`px-3 py-2 rounded-lg text-sm border ${
+              activeTool === 'draw-point'
+                ? 'bg-purple-600 border-purple-500'
+                : 'bg-gray-800 border-gray-700 hover:border-gray-500'
+            } ${!canEdit || mode !== 'edit' ? 'opacity-50 cursor-not-allowed' : ''}`}
+          >
+            Nokta
+          </button>
+          <button
+            onClick={() => startTool('draw-line')}
+            disabled={!canEdit || mode !== 'edit'}
+            className={`px-3 py-2 rounded-lg text-sm border ${
+              activeTool === 'draw-line'
+                ? 'bg-purple-600 border-purple-500'
+                : 'bg-gray-800 border-gray-700 hover:border-gray-500'
+            } ${!canEdit || mode !== 'edit' ? 'opacity-50 cursor-not-allowed' : ''}`}
+          >
+            Çizgi
+          </button>
+          <button
+            onClick={() => startTool('draw-polygon')}
+            disabled={!canEdit || mode !== 'edit'}
+            className={`px-3 py-2 rounded-lg text-sm border ${
+              activeTool === 'draw-polygon'
+                ? 'bg-purple-600 border-purple-500'
+                : 'bg-gray-800 border-gray-700 hover:border-gray-500'
+            } ${!canEdit || mode !== 'edit' ? 'opacity-50 cursor-not-allowed' : ''}`}
+          >
+            Poligon
+          </button>
+          <button
+            onClick={stopDrawingTool}
+            className="px-3 py-2 rounded-lg text-sm border bg-gray-800 border-gray-700 hover:border-gray-500"
+          >
+            Durdur
+          </button>
+          <button
+            onClick={clearDrawings}
+            className="px-3 py-2 rounded-lg text-sm border bg-gray-800 border-gray-700 hover:border-gray-500"
+          >
+            Çizimleri temizle
+          </button>
+        </div>
+      </div>
       {error && <div className="px-4 py-2 text-sm text-red-400 bg-red-500/10 border-b border-red-500/20">{error}</div>}
-      <div ref={viewerContainerRef} className="flex-1 w-full" style={{ minHeight: 'calc(100vh - 120px)' }} />
+
+      <div className="flex flex-col md:flex-row flex-1" style={{ minHeight: 'calc(100vh - 210px)' }}>
+        <div className="md:w-80 border-b md:border-b-0 md:border-r border-gray-800 p-4 space-y-4 bg-gray-950/60">
+          <div>
+            <h3 className="text-sm font-semibold mb-2">Katmanlar</h3>
+            {layers.length === 0 ? (
+              <div className="text-xs text-gray-500">Henüz katman yok</div>
+            ) : (
+              <div className="space-y-3">
+                {layers.map((layer) => (
+                  <div key={layer.id} className="rounded-lg border border-gray-800 bg-gray-900/50 p-3 space-y-2">
+                    <div className="flex items-center justify-between gap-2">
+                      <div>
+                        <p className="text-sm font-medium">{layer.name}</p>
+                        <p className="text-xs text-gray-500 uppercase">{layer.type}</p>
+                      </div>
+                      <label className="flex items-center gap-2 text-xs">
+                        <input
+                          type="checkbox"
+                          checked={layer.visible}
+                          onChange={(e) => toggleLayerVisibility(layer.id, e.target.checked)}
+                        />
+                        Görünür
+                      </label>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <span className="text-xs text-gray-500 w-16">Opaklık</span>
+                      <input
+                        type="range"
+                        min={0.1}
+                        max={1}
+                        step={0.05}
+                        value={layer.opacity}
+                        onChange={(e) => changeLayerOpacity(layer.id, Number(e.target.value))}
+                        className="flex-1"
+                      />
+                      <span className="text-xs text-gray-400 w-10 text-right">
+                        {Math.round(layer.opacity * 100)}%
+                      </span>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+          <div>
+            <h3 className="text-sm font-semibold mb-2">Ölçüm / Çizim</h3>
+            <div className="rounded-lg border border-gray-800 bg-gray-900/50 p-3 text-sm">
+              {measureResult || 'Aktif ölçüm yok'}
+            </div>
+            <p className="text-xs text-gray-500 mt-2">
+              Sol tık ile nokta ekle, çift tık veya sağ tık ile tamamla.
+            </p>
+          </div>
+        </div>
+        <div className="flex-1">
+          <div ref={viewerContainerRef} className="w-full h-[70vh] md:h-full" />
+        </div>
+      </div>
     </div>
   );
 };
+
 
