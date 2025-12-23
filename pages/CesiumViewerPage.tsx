@@ -201,6 +201,9 @@ export const CesiumViewerPage: React.FC = () => {
       };
       
       void initViewer();
+    } catch (initError) {
+      console.error('Viewer initialization error:', initError);
+    }
 
     return () => {
       try {

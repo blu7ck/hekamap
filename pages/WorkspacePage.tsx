@@ -141,7 +141,6 @@ export const WorkspacePage: React.FC = () => {
   const [error, setError] = useState<string | null>(null);
   const [showUploadModal, setShowUploadModal] = useState(false);
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
-  const [assetCategory, setAssetCategory] = useState<'single_model' | 'large_area'>('single_model');
   const [keepRawForever, setKeepRawForever] = useState(true);
   const [retentionDays, setRetentionDays] = useState<number>(30);
   const [uploadProgress, setUploadProgress] = useState(0);
@@ -202,12 +201,14 @@ export const WorkspacePage: React.FC = () => {
 
   const requestSignedUpload = async (
     file: File,
-    category: 'single_model' | 'large_area',
     retentionDays: number | null
   ) => {
     const session = (await supabase.auth.getSession()).data.session;
     const token = session?.access_token;
     if (!token) throw new Error('Auth token bulunamadı.');
+
+    // Auto-detect category based on file format
+    const category = detectAssetCategory(file.name, file.type || 'application/octet-stream');
 
     const res = await fetch('/api/upload-url', {
       method: 'POST',
@@ -236,10 +237,13 @@ export const WorkspacePage: React.FC = () => {
     };
   };
 
-  const notifyUploadComplete = async (assetId: string, category: 'single_model' | 'large_area') => {
+  const notifyUploadComplete = async (assetId: string, fileName: string, mimeType: string) => {
     const session = (await supabase.auth.getSession()).data.session;
     const token = session?.access_token;
     if (!token) throw new Error('Auth token bulunamadı.');
+
+    // Auto-detect category based on file format
+    const category = detectAssetCategory(fileName, mimeType);
 
     const res = await fetch('/api/upload-complete', {
       method: 'POST',
@@ -283,7 +287,6 @@ export const WorkspacePage: React.FC = () => {
       const retention = keepRawForever ? null : Math.max(1, Math.floor(retentionDays));
       const { upload_url, asset_id, headers } = await requestSignedUpload(
         selectedFile,
-        assetCategory,
         retention
       );
 
@@ -348,7 +351,7 @@ export const WorkspacePage: React.FC = () => {
       });
 
       // Notify upload complete to trigger processing
-      const uploadResult = await notifyUploadComplete(asset_id, assetCategory);
+      const uploadResult = await notifyUploadComplete(asset_id, selectedFile.name, selectedFile.type || 'application/octet-stream');
       
       const format = detectSourceFormat(selectedFile.name, selectedFile.type || '');
       const formatInfo = getFormatInfo(format);
@@ -694,11 +697,11 @@ export const WorkspacePage: React.FC = () => {
             <div className="text-sm space-y-1">
               <p className="font-medium">Dosya Yükleme Hakkında</p>
               <ul className="list-disc list-inside space-y-1 text-blue-200/80 text-xs ml-2">
-                <li><strong>Doğrudan görüntülenebilir:</strong> GLB, GLTF, GeoJSON, KML, PNG, JPEG - Anında kullanıma hazır</li>
-                <li><strong>İşleme gerektirir:</strong> OBJ, FBX, IFC, LAS, LAZ, ZIP - Pipeline'da otomatik işlenir</li>
+                <li><strong>Doğrudan görüntülenebilir:</strong> GLB, GLTF, GeoJSON, KML/KMZ - Anında kullanıma hazır</li>
+                <li><strong>Otomatik işleme:</strong> Dosya tipi otomatik algılanır ve uygun işleme yöntemi seçilir</li>
+                <li><strong>Tekil modeller:</strong> OBJ, FBX, IFC → GLB formatına dönüştürülür</li>
+                <li><strong>Büyük alanlar:</strong> LAS, LAZ (LiDAR) → 3D Tiles formatına dönüştürülür</li>
                 <li><strong>ZIP dosyaları:</strong> İçindeki dosyalar otomatik extract edilip işlenir</li>
-                <li><strong>Tekil Model:</strong> Küçük-orta ölçekli modeller → GLB formatına dönüştürülür</li>
-                <li><strong>Büyük Alan:</strong> Şehir/kampüs/LiDAR → 3D Tiles formatına dönüştürülür</li>
               </ul>
             </div>
           </div>
@@ -1021,44 +1024,22 @@ export const WorkspacePage: React.FC = () => {
             </div>
 
             <div className="space-y-4">
-              {/* Asset Category Selection */}
-              <div>
-                <label className="block text-sm font-medium mb-2">Kategori</label>
-                <div className="space-y-3">
-                  <label className="flex items-start gap-3 cursor-pointer p-3 rounded-lg border border-gray-700 hover:border-emerald-500/50 hover:bg-gray-800/50 transition-all">
-                    <input
-                      type="radio"
-                      name="category"
-                      value="single_model"
-                      checked={assetCategory === 'single_model'}
-                      onChange={(e) => setAssetCategory(e.target.value as 'single_model')}
-                      disabled={uploading}
-                      className="w-4 h-4 mt-0.5"
-                    />
-                    <div className="flex-1">
-                      <div className="font-medium">Tekil Model</div>
-                      <div className="text-xs text-gray-400 mt-1">
-                        Küçük-orta ölçekli 3D modeller (bina, obje, makine). GLB formatına dönüştürülür.
-                      </div>
-                    </div>
-                  </label>
-                  <label className="flex items-start gap-3 cursor-pointer p-3 rounded-lg border border-gray-700 hover:border-emerald-500/50 hover:bg-gray-800/50 transition-all">
-                    <input
-                      type="radio"
-                      name="category"
-                      value="large_area"
-                      checked={assetCategory === 'large_area'}
-                      onChange={(e) => setAssetCategory(e.target.value as 'large_area')}
-                      disabled={uploading}
-                      className="w-4 h-4 mt-0.5"
-                    />
-                    <div className="flex-1">
-                      <div className="font-medium">Büyük Alan</div>
-                      <div className="text-xs text-gray-400 mt-1">
-                        Büyük ölçekli sahneler (şehir, kampüs, LiDAR). 3D Tiles formatına dönüştürülür.
-                      </div>
-                    </div>
-                  </label>
+              {/* Auto-detection Info */}
+              <div className="p-4 rounded-lg bg-blue-500/10 border border-blue-500/20 text-blue-300">
+                <div className="flex items-start gap-3">
+                  <AlertCircle className="w-5 h-5 text-blue-400 mt-0.5 flex-shrink-0" />
+                  <div className="text-sm space-y-1">
+                    <p className="font-medium">Otomatik Dosya Tipi Tanıma</p>
+                    <p className="text-xs text-blue-200/80">
+                      Dosya tipi otomatik olarak algılanır ve uygun işleme yöntemi seçilir:
+                    </p>
+                    <ul className="list-disc list-inside space-y-0.5 text-xs text-blue-200/80 ml-2 mt-2">
+                      <li><strong>Doğrudan görüntülenebilir:</strong> GLB, GLTF, GeoJSON, KML/KMZ - Anında kullanıma hazır</li>
+                      <li><strong>Tekil modeller:</strong> OBJ, FBX, IFC → GLB formatına dönüştürülür</li>
+                      <li><strong>Büyük alanlar:</strong> LAS, LAZ (LiDAR) → 3D Tiles formatına dönüştürülür</li>
+                      <li><strong>ZIP dosyaları:</strong> İçindeki dosyalar extract edilip otomatik işlenir</li>
+                    </ul>
+                  </div>
                 </div>
               </div>
 
