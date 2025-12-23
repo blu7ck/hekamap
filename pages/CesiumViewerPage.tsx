@@ -41,11 +41,20 @@ type ActiveTool =
 
 const setCesiumBase = () => {
   const base = typeof CESIUM_BASE_URL !== 'undefined' ? CESIUM_BASE_URL : '/cesium';
-  // @ts-expect-error buildModuleUrl exists in Cesium namespace
-  if (Cesium.buildModuleUrl) Cesium.buildModuleUrl.setBaseUrl(base);
+  const baseUrl = base.endsWith('/') ? base : `${base}/`;
+  
+  // Set base URL for Cesium asset loading
+  try {
+    if (Cesium.buildModuleUrl && typeof (Cesium.buildModuleUrl as any).setBaseUrl === 'function') {
+      (Cesium.buildModuleUrl as any).setBaseUrl(baseUrl);
+    }
+  } catch (e) {
+    // Ignore if setBaseUrl is not available
+  }
+  
   // Also set global for workers that read self.CESIUM_BASE_URL
   if (typeof window !== 'undefined') {
-    (window as any).CESIUM_BASE_URL = base.endsWith('/') ? base : `${base}/`;
+    (window as any).CESIUM_BASE_URL = baseUrl;
   }
 };
 
@@ -1031,7 +1040,16 @@ export const CesiumViewerPage: React.FC = () => {
     );
   }
 
-  const modelViewerAsset = assets.find((a) => a.asset_category === 'model_viewer');
+  // Check if we should use model-viewer: GLB/GLTF files that user selected "Model Viewer" mode
+  // We check by file extension since asset_category is always single_model/large_area
+  const modelViewerAsset = assets.find((a) => {
+    const name = a.name?.toLowerCase() || '';
+    const mime = a.mime_type?.toLowerCase() || '';
+    const isGlb = name.endsWith('.glb') || name.endsWith('.gltf') || mime.includes('gltf');
+    // For now, use model-viewer for all GLB/GLTF files (can be enhanced with metadata later)
+    return isGlb && assets.length === 1; // Only if single asset
+  });
+  
   if (modelViewerAsset) {
     return (
       <div className="min-h-screen bg-black text-white flex flex-col">

@@ -503,10 +503,13 @@ export const WorkspacePage: React.FC = () => {
   // Load viewers for project or asset
   const loadViewers = async (projectId: string, assetId?: string) => {
     setLoadingViewers(true);
+    setError(null);
     try {
       const session = (await supabase.auth.getSession()).data.session;
       const token = session?.access_token;
-      if (!token) throw new Error('Auth token bulunamadı.');
+      if (!token) {
+        throw new Error('Auth token bulunamadı. Lütfen tekrar giriş yapın.');
+      }
 
       const url = new URL('/api/viewer-access', window.location.origin);
       url.searchParams.set('project_id', projectId);
@@ -524,14 +527,23 @@ export const WorkspacePage: React.FC = () => {
 
       if (!res.ok) {
         const errorText = await res.text();
-        throw new Error(errorText || 'Viewer listesi alınamadı');
+        const errorMsg = errorText || `HTTP ${res.status}: Viewer listesi alınamadı`;
+        console.error('Load viewers error:', res.status, errorText);
+        throw new Error(errorMsg);
       }
 
       const data = await res.json();
+      if (!data || !Array.isArray(data.viewers)) {
+        console.warn('Invalid response format:', data);
+        setViewers([]);
+        return;
+      }
       setViewers(data.viewers || []);
     } catch (err: any) {
       console.error('Load viewers error:', err);
-      setError('Viewer listesi alınamadı: ' + err.message);
+      const errorMsg = err.message || 'Viewer listesi alınamadı';
+      setError(errorMsg);
+      setViewers([]);
     } finally {
       setLoadingViewers(false);
     }
@@ -545,7 +557,12 @@ export const WorkspacePage: React.FC = () => {
     }
 
     if (!/^\d{4}$/.test(viewerPin)) {
-      setError('PIN 4 haneli olmalıdır');
+      setError('PIN 4 haneli olmalıdır (sadece rakam)');
+      return;
+    }
+
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(viewerEmail.trim())) {
+      setError('Geçerli bir e-posta adresi girin');
       return;
     }
 
@@ -556,7 +573,9 @@ export const WorkspacePage: React.FC = () => {
     try {
       const session = (await supabase.auth.getSession()).data.session;
       const token = session?.access_token;
-      if (!token) throw new Error('Auth token bulunamadı.');
+      if (!token) {
+        throw new Error('Auth token bulunamadı. Lütfen tekrar giriş yapın.');
+      }
 
       const res = await fetch('/api/viewer-access', {
         method: 'POST',
@@ -567,23 +586,32 @@ export const WorkspacePage: React.FC = () => {
         body: JSON.stringify({
           project_id: selectedProject,
           asset_id: selectedAssetForViewer || null,
-          email: viewerEmail.trim(),
+          email: viewerEmail.trim().toLowerCase(),
           pin: viewerPin.trim(),
         }),
       });
 
       if (!res.ok) {
         const errorText = await res.text();
-        throw new Error(errorText || 'Viewer erişimi oluşturulamadı');
+        const errorMsg = errorText || `HTTP ${res.status}: Viewer erişimi oluşturulamadı`;
+        console.error('Create viewer error:', res.status, errorText);
+        throw new Error(errorMsg);
       }
 
       const result = await res.json();
-      setMessage(`Viewer erişimi oluşturuldu ve e-posta gönderildi: ${result.email}`);
+      if (!result || !result.email) {
+        throw new Error('Geçersiz yanıt alındı');
+      }
+      
+      setMessage(`✓ Viewer erişimi oluşturuldu ve e-posta gönderildi: ${result.email}`);
       setViewerEmail('');
       setViewerPin('');
+      // Reload viewers list
       await loadViewers(selectedProject, selectedAssetForViewer || undefined);
     } catch (err: any) {
-      setError(err.message || 'Viewer erişimi oluşturulamadı');
+      console.error('Create viewer error:', err);
+      const errorMsg = err.message || 'Viewer erişimi oluşturulamadı';
+      setError(errorMsg);
     } finally {
       setCreatingViewer(false);
     }
@@ -591,12 +619,17 @@ export const WorkspacePage: React.FC = () => {
 
   // Delete viewer access
   const handleDeleteViewer = async (accessId: string) => {
-    if (!confirm('Bu viewer erişimini silmek istediğinize emin misiniz?')) return;
+    if (!confirm('Bu viewer erişimini silmek istediğinize emin misiniz? Bu işlem geri alınamaz.')) return;
+
+    setError(null);
+    setMessage(null);
 
     try {
       const session = (await supabase.auth.getSession()).data.session;
       const token = session?.access_token;
-      if (!token) throw new Error('Auth token bulunamadı.');
+      if (!token) {
+        throw new Error('Auth token bulunamadı. Lütfen tekrar giriş yapın.');
+      }
 
       const url = new URL('/api/viewer-access', window.location.origin);
       url.searchParams.set('access_id', accessId);
@@ -611,15 +644,26 @@ export const WorkspacePage: React.FC = () => {
 
       if (!res.ok) {
         const errorText = await res.text();
-        throw new Error(errorText || 'Viewer erişimi silinemedi');
+        const errorMsg = errorText || `HTTP ${res.status}: Viewer erişimi silinemedi`;
+        console.error('Delete viewer error:', res.status, errorText);
+        throw new Error(errorMsg);
       }
 
-      setMessage('Viewer erişimi silindi');
+      const result = await res.json();
+      if (result && result.ok !== false) {
+        setMessage('✓ Viewer erişimi başarıyla silindi');
+      } else {
+        setMessage('Viewer erişimi silindi');
+      }
+      
+      // Reload viewers list
       if (selectedProject) {
         await loadViewers(selectedProject, selectedAssetForViewer || undefined);
       }
     } catch (err: any) {
-      setError(err.message || 'Viewer erişimi silinemedi');
+      console.error('Delete viewer error:', err);
+      const errorMsg = err.message || 'Viewer erişimi silinemedi';
+      setError(errorMsg);
     }
   };
 
@@ -927,10 +971,13 @@ export const WorkspacePage: React.FC = () => {
                                 <ExternalLink className="w-4 h-4" />
                               </button>
                               <button
-                                onClick={() => {
+                                onClick={async () => {
                                   setSelectedAssetForViewer(asset.id);
                                   setShowViewerModal(true);
-                                  void loadViewers(selectedProject!, asset.id);
+                                  setError(null);
+                                  setMessage(null);
+                                  // Auto-load viewers when modal opens
+                                  await loadViewers(selectedProject!, asset.id);
                                 }}
                                 className="p-2 rounded-lg bg-blue-500/10 hover:bg-blue-500/20 text-blue-400 transition-colors"
                                 title="Viewer Erişimi Yönet"
@@ -1289,12 +1336,25 @@ export const WorkspacePage: React.FC = () => {
                   setViewerPin('');
                   setViewers([]);
                   setError(null);
+                  setMessage(null);
                 }}
                 className="p-1.5 rounded-lg hover:bg-gray-800 text-gray-400 hover:text-white transition-colors"
               >
                 <X className="w-5 h-5" />
               </button>
             </div>
+
+            {/* Error and Message Display */}
+            {error && (
+              <div className="mb-4 p-3 rounded-lg bg-red-500/10 border border-red-500/20 text-red-400 text-sm">
+                {error}
+              </div>
+            )}
+            {message && (
+              <div className="mb-4 p-3 rounded-lg bg-emerald-500/10 border border-emerald-500/20 text-emerald-400 text-sm">
+                {message}
+              </div>
+            )}
 
             <div className="space-y-6">
               {/* Add Viewer Form */}
