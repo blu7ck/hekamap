@@ -154,6 +154,16 @@ export const CesiumViewerPage: React.FC = () => {
     
     let viewer: Cesium.Viewer | null = null;
     try {
+      // Disable Cesium Ion - use plain CesiumJS
+      // Set terrain to None to avoid Ion terrain requests
+      const terrainProvider = new Cesium.EllipsoidTerrainProvider();
+      
+      // Use simple black imagery provider instead of Ion
+      const imageryProvider = new Cesium.SingleTileImageryProvider({
+        url: 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==',
+        rectangle: Cesium.Rectangle.MAX_VALUE,
+      });
+      
       viewer = new Cesium.Viewer(viewerContainerRef.current, {
         requestRenderMode: true,
         timeline: false,
@@ -161,15 +171,33 @@ export const CesiumViewerPage: React.FC = () => {
         homeButton: false,
         geocoder: false,
         fullscreenButton: false,
+        terrainProvider: terrainProvider,
+        baseLayerPicker: false, // Disable base layer picker (uses Ion)
+        imageryProvider: imageryProvider,
       });
+      
+      // Remove default Ion imagery layers
+      viewer.imageryLayers.removeAll();
+      
+      // Ensure no Ion token is set
+      if (Cesium.Ion && Cesium.Ion.defaultAccessToken) {
+        Cesium.Ion.defaultAccessToken = '';
+      }
+      
       viewerRef.current = viewer;
 
       // Wait for viewer to be fully initialized
       const initViewer = async () => {
-        // Wait a bit for viewer to initialize
-        await new Promise(resolve => setTimeout(resolve, 100));
+        // Wait for viewer to be completely ready
+        await new Promise(resolve => setTimeout(resolve, 200));
         
         if (!viewer || viewer.isDestroyed()) return;
+        
+        // Ensure scene is ready
+        if (!viewer.scene || !viewer.cesiumWidget) {
+          console.warn('Viewer scene not ready');
+          return;
+        }
         
         // Watermark
         const watermark = () => {
@@ -238,39 +266,76 @@ export const CesiumViewerPage: React.FC = () => {
       return;
     }
     
-    if (!viewer.cesiumWidget || !viewer.scene || !viewer.entities) {
-      console.warn('Viewer not fully initialized yet');
+    // Comprehensive initialization check
+    if (!viewer.cesiumWidget) {
+      console.warn('Viewer cesiumWidget not ready');
       return;
     }
     
-    // Additional check: ensure scene is ready
-    if (!viewer.scene.globe || !viewer.scene.primitives) {
-      console.warn('Scene not fully initialized yet');
+    if (!viewer.scene) {
+      console.warn('Viewer scene not ready');
       return;
     }
+    
+    if (!viewer.entities) {
+      console.warn('Viewer entities not ready');
+      return;
+    }
+    
+    // Additional check: ensure scene components are ready
+    if (!viewer.scene.globe) {
+      console.warn('Scene globe not ready');
+      return;
+    }
+    
+    if (!viewer.scene.primitives) {
+      console.warn('Scene primitives not ready');
+      return;
+    }
+    
+    if (!viewer.dataSources) {
+      console.warn('Viewer dataSources not ready');
+      return;
+    }
+    
+    // Wait a bit more to ensure everything is stable
+    const loadAssets = async () => {
+      await new Promise(resolve => setTimeout(resolve, 100));
+      
+      // Re-check after delay
+      if (!viewerRef.current || viewerRef.current.isDestroyed()) {
+        console.warn('Viewer destroyed during wait');
+        return;
+      }
+      
+      const currentViewer = viewerRef.current;
+      if (!currentViewer.scene || !currentViewer.entities || !currentViewer.dataSources) {
+        console.warn('Viewer not ready after wait');
+        return;
+      }
 
-    const primitives: (Cesium.Cesium3DTileset | Cesium.Model | Cesium.DataSource)[] = [];
-    const dataSources: Cesium.DataSource[] = [];
-    let isMounted = true;
+      const primitives: (Cesium.Cesium3DTileset | Cesium.Model | Cesium.DataSource)[] = [];
+      const dataSources: Cesium.DataSource[] = [];
+      let isMounted = true;
 
-    (async () => {
+      // Check if viewer is still valid before each operation
+      const checkViewer = () => {
+        if (!isMounted || !viewerRef.current) {
+          throw new Error('Viewer unmounted');
+        }
+        try {
+          if (viewerRef.current.isDestroyed()) {
+            throw new Error('Viewer destroyed');
+          }
+        } catch (e) {
+          throw new Error('Viewer in invalid state');
+        }
+        if (!viewerRef.current.cesiumWidget || !viewerRef.current.scene) {
+          throw new Error('Viewer not initialized');
+        }
+      };
+
       try {
-        // Check if viewer is still valid before each operation
-        const checkViewer = () => {
-          if (!isMounted || !viewerRef.current) {
-            throw new Error('Viewer unmounted');
-          }
-          try {
-            if (viewerRef.current.isDestroyed()) {
-              throw new Error('Viewer destroyed');
-            }
-          } catch (e) {
-            throw new Error('Viewer in invalid state');
-          }
-          if (!viewerRef.current.cesiumWidget || !viewerRef.current.scene) {
-            throw new Error('Viewer not initialized');
-          }
-        };
         for (const asset of assets) {
           checkViewer();
           const mime = asset.mime_type?.toLowerCase() || '';
@@ -515,15 +580,18 @@ export const CesiumViewerPage: React.FC = () => {
         console.error('Cesium load error', err);
         setError('Cesium varlıkları yüklenemedi: ' + (err instanceof Error ? err.message : String(err)));
       }
-    })();
+    };
+    
+    void loadAssets();
 
     return () => {
       isMounted = false;
-      if (viewer && !viewer.isDestroyed() && viewer.scene) {
+      const currentViewer = viewerRef.current;
+      if (currentViewer && !currentViewer.isDestroyed() && currentViewer.scene) {
         primitives.forEach((p) => {
           if (p instanceof Cesium.Cesium3DTileset || p instanceof Cesium.Model) {
             try {
-              viewer.scene.primitives.remove(p);
+              currentViewer.scene.primitives.remove(p);
             } catch (e) {
               console.warn('Error removing primitive:', e);
             }
@@ -531,7 +599,7 @@ export const CesiumViewerPage: React.FC = () => {
         });
         dataSources.forEach((ds) => {
           try {
-            viewer.dataSources.remove(ds);
+            currentViewer.dataSources.remove(ds);
           } catch (e) {
             console.warn('Error removing data source:', e);
           }
