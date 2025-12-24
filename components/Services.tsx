@@ -21,7 +21,7 @@ export const servicesData = [
     desc: "Geniş arazilerin havadan yüksek çözünürlüklü haritalanması.",
     fullDesc: "RTK/PPK modüllü İnsansız Hava Araçlarımız (İHA) ile geniş tarım arazileri, şantiye sahaları ve şehir planlama alanlarını yüksek çözünürlüklü ortofotolara dönüştürüyoruz. Klasik yöntemlere göre %80 daha hızlı ve güvenli veri toplama.",
     features: ["5cm Piksel Çözünürlüğü", "Günde 500+ Hektar", "Termal Haritalama", "Hacim Hesaplamaları"],
-    image: "https://images.unsplash.com/photo-1506947411487-a56738267384?q=80&w=3348&auto=format&fit=crop",
+    image: "/assets/try.jpeg",
     video: "https://assets.mixkit.co/videos/preview/mixkit-drone-flying-over-a-factory-42866-large.mp4",
     color: "from-sky-900/90 to-black",
     icon: Plane

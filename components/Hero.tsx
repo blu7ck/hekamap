@@ -7,7 +7,7 @@ export const Hero: React.FC = () => {
       {/* Background Media */}
       <div className="absolute inset-0 z-0">
         <img 
-          src="https://images.unsplash.com/photo-1506947411487-a56738267384?q=80&w=3348&auto=format&fit=crop" 
+          src="/assets/header.webm" 
           alt="Engineering Background"
           className="w-full h-full object-cover scale-105 animate-[slowPan_20s_infinite_linear] opacity-60" 
         />
