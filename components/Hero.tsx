@@ -6,11 +6,15 @@ export const Hero: React.FC = () => {
       
       {/* Background Media */}
       <div className="absolute inset-0 z-0">
-        <img 
-          src="/assets/header.webm" 
-          alt="Engineering Background"
-          className="w-full h-full object-cover scale-105 animate-[slowPan_20s_infinite_linear] opacity-60" 
-        />
+        <video 
+          autoPlay 
+          loop 
+          muted 
+          playsInline
+          className="w-full h-full object-cover scale-105 opacity-60"
+        >
+          <source src="/assets/header.webm" type="video/webm" />
+        </video>
         <div className="absolute inset-0 bg-gradient-to-b from-black/60 via-transparent to-black/80"></div>
       </div>
 
