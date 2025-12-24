@@ -610,7 +610,11 @@ export const CesiumViewerPage: React.FC = () => {
       viewer.imageryLayers.removeAll();
       
       // Add default OpenStreetMap layer
-      viewer.imageryLayers.addImageryProvider(defaultImageryProvider);
+      try {
+        viewer.imageryLayers.addImageryProvider(defaultImageryProvider);
+      } catch (e) {
+        console.warn('Failed to add default imagery layer:', e);
+      }
       
       // Ensure no Ion token is set
       if (Cesium.Ion) {
@@ -691,10 +695,16 @@ export const CesiumViewerPage: React.FC = () => {
         stopDrawingTool();
         clearDrawings();
         clearLayerHandles(viewer);
+        
         if (viewer && !viewer.isDestroyed()) {
+          // Remove map provider reference
+          (viewer as any)._mapProviders = undefined;
+          
           if (watermarkRef.current && viewer.scene) {
             viewer.scene.postRender.removeEventListener(watermarkRef.current);
           }
+          
+          // Explicitly destroy viewer
           viewer.destroy();
         }
       } catch (cleanupError) {
@@ -702,6 +712,11 @@ export const CesiumViewerPage: React.FC = () => {
       } finally {
         viewerRef.current = null;
         watermarkRef.current = null;
+        layerHandlesRef.current = {};
+        // Clear global reference
+        if (typeof window !== 'undefined') {
+          // (window as any).CESIUM_BASE_URL = undefined; // Don't clear base URL, might be needed by other instances
+        }
       }
     };
   }, [profile, user]);
@@ -900,7 +915,11 @@ export const CesiumViewerPage: React.FC = () => {
             asset.name?.endsWith('.kml') ||
             asset.name?.endsWith('.kmz')
           ) {
-            const kml = await Cesium.KmlDataSource.load(url, { camera: viewer.camera, canvas: viewer.canvas });
+            const kml = await Cesium.KmlDataSource.load(url, { 
+              camera: viewer.camera, 
+              canvas: viewer.canvas,
+              clampToGround: true // Ensure features are clamped to terrain/globe
+            });
             if (!ready()) break;
             viewer.dataSources.add(kml);
             layerHandlesRef.current[asset.id] = { type: 'kml', handle: kml };
@@ -1128,8 +1147,9 @@ export const CesiumViewerPage: React.FC = () => {
     const name = a.name?.toLowerCase() || '';
     const mime = a.mime_type?.toLowerCase() || '';
     const isGlb = name.endsWith('.glb') || name.endsWith('.gltf') || mime.includes('gltf');
-    // Use model-viewer for GLB/GLTF if single asset (user choice stored in metadata later)
-    return isGlb && assets.length === 1;
+    // Use model-viewer for GLB/GLTF if single asset AND category is 'single_model' (or undefined/null default)
+    // If category is 'large_area', we force Cesium (GIS mode)
+    return isGlb && assets.length === 1 && (a.asset_category === 'single_model' || !a.asset_category);
   });
   
   if (modelViewerAsset) {

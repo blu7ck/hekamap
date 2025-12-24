@@ -221,14 +221,25 @@ export const WorkspacePage: React.FC = () => {
 
   const loadProjects = async () => {
     setError(null);
-    const { data, error } = await supabase.rpc('get_accessible_projects');
-    if (error) {
-      setError('Projeler alınamadı.');
-      return;
-    }
-    setProjects(data || []);
-    if (data && data.length > 0) {
-      setSelectedProject(data[0].id);
+    try {
+      const { data, error } = await supabase.rpc('get_accessible_projects');
+      if (error) {
+        console.error('get_accessible_projects RPC error:', error);
+        setError('Projeler alınamadı: ' + error.message);
+        return;
+      }
+      setProjects(data || []);
+      if (data && data.length > 0) {
+        // Only set selected project if none is selected or if the current one is not in the list
+        setSelectedProject(prev => {
+          if (!prev) return data[0].id;
+          const exists = data.find((p: Project) => p.id === prev);
+          return exists ? prev : data[0].id;
+        });
+      }
+    } catch (err: any) {
+      console.error('loadProjects exception:', err);
+      setError('Projeler yüklenirken hata oluştu.');
     }
   };
 
@@ -258,7 +269,16 @@ export const WorkspacePage: React.FC = () => {
     if (!token) throw new Error('Auth token bulunamadı.');
 
     // Auto-detect category based on file format
-    const category = detectAssetCategory(file.name, file.type || 'application/octet-stream');
+    let category = detectAssetCategory(file.name, file.type || 'application/octet-stream');
+
+    // Override category based on user choice for ambiguous formats
+    if (isAmbiguousModelFormat(detectSourceFormat(file.name, file.type || ''))) {
+      if (viewerMode === 'model') {
+        category = 'single_model'; // Will use model-viewer
+      } else if (viewerMode === 'gis') {
+        category = 'large_area'; // Will use Cesium (force GIS mode)
+      }
+    }
 
     const res = await fetch('/api/upload-url', {
       method: 'POST',
@@ -293,7 +313,27 @@ export const WorkspacePage: React.FC = () => {
     if (!token) throw new Error('Auth token bulunamadı.');
 
     // Auto-detect category based on file format
-    const category = detectAssetCategory(fileName, mimeType);
+    let category = detectAssetCategory(fileName, mimeType);
+
+    // If we have a saved viewer mode for this file, use it (passed via closure if needed, but here we can rely on default behavior or re-detect)
+    // For consistency with requestSignedUpload, we should try to match the logic.
+    // However, notifyUploadComplete primarily updates status. The category was already set in upload-url.
+    // We'll just use detection here, but if the user selected 'gis' (large_area), we might need to preserve it.
+    // Since we can't easily pass the chosen mode here without prop drilling or state persistence across the async upload,
+    // we'll rely on the fact that the backend 'upload-url' created the record with the correct category.
+    // This call confirms it. We'll verify if we can send the correct category again.
+    
+    // Check if we have the category in state (we don't easily). 
+    // Actually, 'upload-url' creates the DB record with the category. 'upload-complete' might trigger processing based on this.
+    // Let's rely on the file extension/detection again, but ideally we should pass the chosen category.
+    
+    // FIX: Re-evaluate category based on viewerMode state if it's the currently selected file being completed
+    if (selectedFile && selectedFile.name === fileName) {
+       if (isAmbiguousModelFormat(detectSourceFormat(fileName, mimeType))) {
+         if (viewerMode === 'model') category = 'single_model';
+         else if (viewerMode === 'gis') category = 'large_area';
+       }
+    }
 
     const res = await fetch('/api/upload-complete', {
       method: 'POST',
