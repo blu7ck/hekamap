@@ -13,7 +13,6 @@ export default defineConfig(({ mode }) => {
       define: {
         'process.env.API_KEY': JSON.stringify(env.GEMINI_API_KEY),
         'process.env.GEMINI_API_KEY': JSON.stringify(env.GEMINI_API_KEY),
-        CESIUM_BASE_URL: JSON.stringify('/cesium'),
       },
       resolve: {
         alias: {
@@ -32,8 +31,7 @@ export default defineConfig(({ mode }) => {
             entryFileNames: 'assets/[name]-[hash].js',
           },
         },
-        // Chunk size warning'ini artır (CesiumJS büyük)
-        chunkSizeWarningLimit: 1000,
+        chunkSizeWarningLimit: 500,
       },
     };
 });

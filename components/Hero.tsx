@@ -8,7 +8,6 @@ export const Hero: React.FC = () => {
       <div className="absolute inset-0 z-0">
         <video 
           autoPlay 
-          loop 
           muted 
           playsInline
           className="w-full h-full object-cover scale-105 opacity-60"
@@ -20,15 +19,12 @@ export const Hero: React.FC = () => {
 
       <div className="relative z-10 text-center px-6 w-full max-w-5xl mx-auto flex flex-col items-center h-full justify-center py-20">
         <div className="flex flex-col items-center">
-           <h1 className="text-7xl md:text-[11rem] font-oswald font-bold text-white tracking-tighter leading-none select-none">
-            HEKA<span className="text-emerald-500">MAP</span>
-          </h1>
-          <div className="h-[2px] w-12 md:w-32 bg-emerald-500 mt-2 animate-[scaleWidth_1.2s_ease-out]"></div>
+           <img 
+             src="/assets/logo.png" 
+             alt="HEKAMAP" 
+             className="h-20 md:h-32 lg:h-40 object-contain"
+           />
         </div>
-        
-        <h2 className="text-white font-oswald font-light tracking-[0.4em] uppercase text-sm md:text-2xl mt-8 opacity-90">
-          Harita Mühendisliği & İleri Teknoloji
-        </h2>
         
         <p className="mt-12 text-stone-400 text-[10px] md:text-xs max-w-xs font-light tracking-[0.3em] uppercase opacity-40 border-l border-white/20 pl-4">
           Görünmeyeni görüyor, ölçülemeyeni ölçüyoruz.

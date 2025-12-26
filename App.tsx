@@ -6,13 +6,6 @@ import { Contact } from './components/Contact';
 import { SideControls } from './components/SideControls';
 import { ContactModal } from './components/ContactModal';
 import { PageNavigation } from './components/PageNavigation';
-import { AuthProvider } from './auth/AuthProvider';
-import { ProtectedRoute } from './components/ProtectedRoute';
-import { AdminLogin } from './pages/AdminLogin';
-import { AdminDashboard } from './pages/AdminDashboard';
-import { WorkspaceLogin } from './pages/WorkspaceLogin';
-import { WorkspacePage } from './pages/WorkspacePage';
-import { CesiumViewerPage } from './pages/CesiumViewerPage';
 import { ErrorBoundary } from './components/ErrorBoundary';
 
 const LandingPage: React.FC = () => {
@@ -83,40 +76,12 @@ const LandingPage: React.FC = () => {
 const App: React.FC = () => {
   return (
     <ErrorBoundary>
-      <AuthProvider>
-        <BrowserRouter>
-          <Routes>
-            <Route path="/" element={<LandingPage />} />
-            <Route path="/hekadmin/login" element={<AdminLogin />} />
-            <Route
-              path="/hekadmin"
-              element={
-                <ProtectedRoute roles={['owner']} fallback="/hekadmin/login">
-                  <AdminDashboard />
-                </ProtectedRoute>
-              }
-            />
-            <Route path="/workspace/login" element={<WorkspaceLogin />} />
-            <Route
-              path="/workspace"
-              element={
-                <ProtectedRoute roles={['owner', 'admin']} fallback="/workspace/login">
-                  <WorkspacePage />
-                </ProtectedRoute>
-              }
-            />
-            <Route
-              path="/viewer/:projectId"
-              element={
-                <ProtectedRoute roles={['owner', 'admin']} fallback="/workspace/login">
-                  <CesiumViewerPage />
-                </ProtectedRoute>
-              }
-            />
-            <Route path="*" element={<Navigate to="/" replace />} />
-          </Routes>
-        </BrowserRouter>
-      </AuthProvider>
+      <BrowserRouter>
+        <Routes>
+          <Route path="/" element={<LandingPage />} />
+          <Route path="*" element={<Navigate to="/" replace />} />
+        </Routes>
+      </BrowserRouter>
     </ErrorBoundary>
   );
 };

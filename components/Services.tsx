@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { Scan, Plane, Map as MapIcon, ArrowRight, X, ChevronRight, CheckCircle } from 'lucide-react';
+import { Scan, Plane, Map as MapIcon, ArrowRight, X, ChevronRight, CheckCircle, Leaf, Pickaxe } from 'lucide-react';
 
 export const servicesData = [
   {
@@ -9,7 +9,7 @@ export const servicesData = [
     desc: "Milyonlarca nokta ile dijital ikiz oluşturma.",
     fullDesc: "Velodyne ve Riegl marka LiDAR sensörlerimiz ile saniyede 1 milyon nokta atımı gerçekleştirerek ormanlık alanlardan endüstriyel tesislere kadar her yeri milimetre hassasiyetinde modelliyoruz. Nokta bulutu verileri, analiz edilebilir dijital ikizlere dönüştürülür.",
     features: ["Saniyede 1M Nokta", "Bitki Örtüsü Penetrasyonu", "Endüstriyel Tarama", "Tünel ve Maden Ölçümleri"],
-    image: "https://images.unsplash.com/photo-1551288049-bebda4e38f71?q=80&w=2070&auto=format&fit=crop",
+    image: "/assets/lidar360.png",
     video: "https://assets.mixkit.co/videos/preview/mixkit-data-center-server-lights-25744-large.mp4",
     color: "from-emerald-900/90 to-black",
     icon: Scan
@@ -21,7 +21,7 @@ export const servicesData = [
     desc: "Geniş arazilerin havadan yüksek çözünürlüklü haritalanması.",
     fullDesc: "RTK/PPK modüllü İnsansız Hava Araçlarımız (İHA) ile geniş tarım arazileri, şantiye sahaları ve şehir planlama alanlarını yüksek çözünürlüklü ortofotolara dönüştürüyoruz. Klasik yöntemlere göre %80 daha hızlı ve güvenli veri toplama.",
     features: ["5cm Piksel Çözünürlüğü", "Günde 500+ Hektar", "Termal Haritalama", "Hacim Hesaplamaları"],
-    image: "/assets/try.jpeg",
+    image: "/assets/drone.png",
     video: "https://assets.mixkit.co/videos/preview/mixkit-drone-flying-over-a-factory-42866-large.mp4",
     color: "from-sky-900/90 to-black",
     icon: Plane
@@ -33,10 +33,34 @@ export const servicesData = [
     desc: "İmar, aplikasyon ve klasik haritacılık çözümleri.",
     fullDesc: "Yasal mevzuata uygun imar uygulamaları, parselasyon, ifraz-tevhid işlemleri ve inşaat projelerinizin aplikasyon süreçlerini yönetiyoruz. Resmi kurumlarla olan tüm süreçlerde uzman kadromuzla yanınızdayız.",
     features: ["İmar Uygulamaları", "Aplikasyon", "Sınır Tespiti", "Hukuki Danışmanlık"],
-    image: "https://images.unsplash.com/photo-1581094794329-c8112a89af12?q=80&w=2532&auto=format&fit=crop",
+    image: "/assets/harita-map.png",
     video: "https://assets.mixkit.co/videos/preview/mixkit-topographic-map-lines-digital-animation-31744-large.mp4",
     color: "from-amber-900/90 to-black",
     icon: MapIcon
+  },
+  {
+    id: 4,
+    title: "ORMANCILIK",
+    subtitle: "Çalışmaları",
+    desc: "Orman kaynaklarının modern teknolojilerle analizi ve yönetimi.",
+    fullDesc: "LiDAR ve drone teknolojilerini kullanarak orman alanlarının 3D modellenmesi, ağaç sayımı, biyokütle hesaplamaları ve orman sağlığı analizleri gerçekleştiriyoruz. Sürdürülebilir orman yönetimi için detaylı veri sağlıyoruz.",
+    features: ["Ağaç Sayımı", "Biyokütle Hesaplama", "Orman Sağlığı Analizi", "3D Orman Modelleme"],
+    image: "/assets/orman-forrest.png",
+    video: "",
+    color: "from-green-900/90 to-black",
+    icon: Leaf
+  },
+  {
+    id: 5,
+    title: "MADENCİLİK",
+    subtitle: "Çalışmaları",
+    desc: "Maden sahalarının güvenli ve hassas ölçümü.",
+    fullDesc: "Açık ocak ve yeraltı madenlerinde hacim hesaplamaları, stok ölçümleri, döküm sahası yönetimi ve güvenlik analizleri yapıyoruz. Dron ve LiDAR teknolojileri ile maden operasyonlarınızı optimize ediyoruz.",
+    features: ["Hacim Hesaplamaları", "Stok Ölçümleri", "Döküm Sahası Yönetimi", "Güvenlik Analizleri"],
+    image: "/assets/maden-mine.png",
+    video: "",
+    color: "from-stone-900/90 to-black",
+    icon: Pickaxe
   }
 ];
 

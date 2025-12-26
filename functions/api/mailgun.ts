@@ -1,6 +1,6 @@
 /**
  * Mailgun email sending utility
- * Independent of Supabase/authentication - only requires Mailgun credentials
+ * Only requires Mailgun credentials
  */
 type MailgunEnv = {
   MAILGUN_API_KEY: string;
